@@ -1,0 +1,46 @@
+# ---------------------------
+# Core Python Dependencies
+# ---------------------------
+python-dotenv
+pydantic
+numpy
+pandas
+
+# ---------------------------
+# PDF, OCR & Image Processing
+# ---------------------------
+pymupdf                # PDF text extraction + rendering
+pillow                 # Image loading
+opencv-python          # Image processing (deskew, thresholding)
+pytesseract            # OCR engine
+paddleocr              # Hybrid OCR engine
+python-bidi            # (optional) for handling bidi text
+regex                  # advanced regex for extraction rules
+
+# ---------------------------
+# LLM Inference (Groq)
+# ---------------------------
+groq                   # Groq Python client
+
+# ---------------------------
+# Web Framework / UI
+# ---------------------------
+streamlit              # Streamlit UI
+watchdog               # Hot reload
+
+# ---------------------------
+# Security & Logging
+# ---------------------------
+cryptography
+pyyaml
+
+# ---------------------------
+# Utility / Helper Libraries
+# ---------------------------
+tqdm
+requests
+uuid
+
+beautifulsoup4
+pytest
+-e .

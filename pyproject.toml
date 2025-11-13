@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "claim_pipeline"
+version = "1.0.0"
+description = "Intelligent Insurance Claims Processing Pipeline (OCR → Extraction → AI → HITL → Decision)"
+authors = [
+    { name="Your Name", email="you@example.com" }
+]
+readme = "README.md"
+requires-python = ">=3.9"
+
+dependencies = [
+    "streamlit",
+    "pymupdf",
+    "paddleocr",
+    "pytesseract",
+    "python-dotenv",
+    "opencv-python",
+    "pillow",
+    "groq",
+    "numpy",
+    "regex",
+    "python-dateutil",
+    "pandas",
+]
+
+
+[project.urls]
+Homepage = "https://github.com/your-repo"
+Documentation = "https://github.com/your-repo/docs"
+Source = "https://github.com/your-repo"
+
+
+[project.scripts]
+claim_pipeline_ui = "claim_pipeline.ui.app:main"
+claim_pipeline_run = "claim_pipeline.pipeline_runner:main"

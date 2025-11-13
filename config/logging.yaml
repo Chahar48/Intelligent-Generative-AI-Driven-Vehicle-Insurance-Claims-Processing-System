@@ -1,0 +1,54 @@
+version: 1
+
+formatters:
+  json:
+    format: >
+      {
+        "timestamp": "%(asctime)s",
+        "level": "%(levelname)s",
+        "logger": "%(name)s",
+        "message": "%(message)s",
+        "module": "%(module)s",
+        "function": "%(funcName)s",
+        "line": "%(lineno)d"
+      }
+
+filters:
+  pii_masker:
+    (): security.secure_logging.PiiMaskFilter
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: json
+    filters: [pii_masker]
+    level: INFO
+
+  file:
+    class: logging.handlers.RotatingFileHandler
+    formatter: json
+    filters: [pii_masker]
+    filename: logs/app.log
+    maxBytes: 5242880      # 5MB
+    backupCount: 5
+    level: INFO
+
+loggers:
+  claim_pipeline:
+    level: INFO
+    handlers: [console, file]
+    propagate: no
+
+  security:
+    level: WARNING
+    handlers: [console, file]
+    propagate: no
+
+  storage:
+    level: INFO
+    handlers: [console, file]
+    propagate: no
+
+root:
+  level: INFO
+  handlers: [console, file]
