@@ -188,3 +188,38 @@ def load_claim(claim_id: str) -> Dict[str, Any]:
         "fields": load_json(os.path.join(base, "fields", "fields.json")) or {},
         "decision": load_json(os.path.join(base, "decision", "decision.json")) or {}
     }
+
+
+class StorageManager:
+    def save_raw_upload(self, claim_id: str, file_path: str, uploader: str):
+        # file_path is a local file, not bytes. So read it.
+        file_name = os.path.basename(file_path)
+
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
+
+        return save_raw_upload(claim_id, file_name, file_bytes)
+
+    def save_extracted_text(self, claim_id: str, extracted_text: str):
+        return save_extracted_text(claim_id, extracted_text)
+
+    def save_structured_fields(self, claim_id, fields_dict: dict):
+        return save_structured_fields(
+            claim_id,
+            raw_fields=fields_dict.get("raw_fields", {}),
+            normalized_fields=fields_dict.get("normalized", {}),
+            validation=fields_dict.get("validation", {}),
+            ai_inferred=fields_dict.get("ai_inference", {})
+        )
+
+    def save_decision(self, claim_id, decision):
+        return save_decision_result(claim_id, decision)
+
+    def save_hitl_task(self, claim_id, task):
+        # optional if you store HITL tasks later
+        path = os.path.join(BASE_DIR, claim_id, "hitl")
+        _ensure_dir(path)
+        out = {"timestamp": _timestamp(), "task": task}
+        save_path = os.path.join(path, "hitl.json")
+        _write_json(save_path, out)
+        return save_path

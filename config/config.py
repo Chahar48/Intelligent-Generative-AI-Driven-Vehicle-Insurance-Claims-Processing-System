@@ -31,6 +31,9 @@ DECISION_DIR = "decision"
 HITL_DIR = "hitl"
 AUDIT_DIR = "audit"
 
+# Actual directory where raw uploaded claim files will be stored
+RAW_DATA_DIR = CLAIMS_DIR
+
 # ------------------------------
 # OCR and Processing Config
 # ------------------------------

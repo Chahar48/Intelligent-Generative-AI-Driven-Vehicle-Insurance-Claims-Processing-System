@@ -339,25 +339,6 @@ def normalize_string(raw, max_len=MAX_STRING_LEN):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # # claim_pipeline/processing/normalizer.py
 # """
 # Robust normalizer utilities for claims pipeline.

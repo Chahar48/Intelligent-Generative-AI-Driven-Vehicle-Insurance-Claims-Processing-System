@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass, asdict
 from typing import List
 from pathlib import Path
-from config import RAW_DATA_DIR
+from config.config import RAW_DATA_DIR
 
 
 # ------------------------------------------------------
