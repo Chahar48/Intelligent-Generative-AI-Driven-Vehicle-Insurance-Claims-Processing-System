@@ -1,0 +1,6 @@
+{
+  "admin": "admin",
+  "alice_reviewer": "reviewer",
+  "bob_auditor": "auditor",
+  "viewer_user": "viewer"
+}
