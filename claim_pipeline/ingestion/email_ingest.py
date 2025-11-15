@@ -1,32 +1,20 @@
-# claim_pipeline/data_ingestion/email_ingest.py
+# claim_pipeline/ingestion/email_ingest.py
 
 import os
-import logging
-import email
-import base64
 from email import policy
 from email.parser import BytesParser
-from typing import Dict, List, Any
 from bs4 import BeautifulSoup
-from config import RAW_DATA_DIR
 
-# For .msg file support
+# Optional .msg support (Outlook emails)
 try:
-    import extract_msg   # lightweight Outlook .msg parser
+    import extract_msg
 except ImportError:
     extract_msg = None
 
 
-# ----------------------------------------------------
-# Logging
-# ----------------------------------------------------
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-
-# ----------------------------------------------------
-# Helper: clean HTML → plain text
-# ----------------------------------------------------
+# -------------------------------------------------
+# Helper: Convert HTML → plain text
+# -------------------------------------------------
 def html_to_text(html_content: str) -> str:
     try:
         soup = BeautifulSoup(html_content, "html.parser")
@@ -35,101 +23,80 @@ def html_to_text(html_content: str) -> str:
         return ""
 
 
-# ----------------------------------------------------
-# Helper: detect presence of email-like text inside attachments
-# ----------------------------------------------------
-def detect_email_content(text: str) -> bool:
-    email_indicators = ["From:", "To:", "Subject:", "Sent:", "Forwarded message"]
-    txt = text.lower()
-    return any(ind.lower() in txt for ind in email_indicators)
-
-
-# ----------------------------------------------------
-# Handle .eml files
-# ----------------------------------------------------
-def _parse_eml(email_path: str, claim_folder: str) -> Dict[str, Any]:
-    """
-    Extracts body, metadata, and attachments from .eml email.
-    """
-    body_text = ""
+# -------------------------------------------------
+# Parse .eml files (simple)
+# -------------------------------------------------
+def _parse_eml(email_path: str, claim_folder: str):
+    body = ""
     attachments = []
-    metadata = {"from": None, "to": None, "subject": None, "date": None}
+    metadata = {}
 
     try:
         with open(email_path, "rb") as f:
             msg = BytesParser(policy=policy.default).parse(f)
 
-        metadata["from"] = msg.get("From")
-        metadata["to"] = msg.get("To")
-        metadata["subject"] = msg.get("Subject")
-        metadata["date"] = msg.get("Date")
+        metadata = {
+            "from": msg.get("From"),
+            "to": msg.get("To"),
+            "subject": msg.get("Subject"),
+            "date": msg.get("Date"),
+        }
 
-        # Walk through parts
+        # If email has multiple parts
         if msg.is_multipart():
             for part in msg.walk():
-                content_type = part.get_content_type()
+                ctype = part.get_content_type()
 
-                # Prefer plain-text
-                if content_type == "text/plain":
-                    body_text += part.get_content()
+                # Prefer plain text
+                if ctype == "text/plain":
+                    body = part.get_content()
 
-                # If only HTML exists
-                elif content_type == "text/html" and not body_text.strip():
-                    html_content = part.get_content()
-                    body_text = html_to_text(html_content)
+                # Fallback to HTML
+                elif ctype == "text/html" and not body.strip():
+                    body = html_to_text(part.get_content())
 
-                # Attachment
+                # Save attachments
                 elif part.get_filename():
                     filename = part.get_filename()
                     safe_name = filename.replace("..", "").replace("/", "_")
-                    att_path = os.path.join(claim_folder, safe_name)
+                    save_path = os.path.join(claim_folder, safe_name)
 
-                    with open(att_path, "wb") as out:
+                    with open(save_path, "wb") as out:
                         out.write(part.get_payload(decode=True))
 
-                    attachments.append(att_path)
-                    logger.info(f"[EmailIngest] Saved attachment: {att_path}")
+                    attachments.append(save_path)
 
         else:
             # Single-part email
-            content_type = msg.get_content_type()
+            ctype = msg.get_content_type()
             content = msg.get_content()
 
-            if content_type == "text/plain":
-                body_text = content
-            elif content_type == "text/html":
-                body_text = html_to_text(content)
+            if ctype == "text/plain":
+                body = content
+            elif ctype == "text/html":
+                body = html_to_text(content)
 
-    except Exception as e:
-        logger.error(f"[EmailIngest] Error parsing .eml file {email_path}: {e}")
-
-    # Detect embedded email signatures or forwarded email content
-    embedded_email = detect_email_content(body_text)
+    except Exception:
+        pass  # keep it simple for beginners
 
     return {
-        "body": body_text,
-        "attachments": attachments,
+        "type": "eml",
+        "body": body,
         "metadata": metadata,
-        "contains_embedded_email": embedded_email,
-        "type": "eml"
+        "attachments": attachments
     }
 
 
-# ----------------------------------------------------
-# Handle .msg files
-# ----------------------------------------------------
-def _parse_msg(email_path: str, claim_folder: str) -> Dict[str, Any]:
-    """
-    Extracts body, metadata, and attachments from .msg Outlook emails.
-    """
+# -------------------------------------------------
+# Parse .msg files (simple)
+# -------------------------------------------------
+def _parse_msg(email_path: str, claim_folder: str):
     if extract_msg is None:
-        logger.error("[EmailIngest] Cannot parse .msg because 'extract_msg' is not installed.")
         return {
+            "type": "msg",
             "body": "",
-            "attachments": [],
             "metadata": {},
-            "contains_embedded_email": False,
-            "type": "msg"
+            "attachments": []
         }
 
     try:
@@ -139,60 +106,53 @@ def _parse_msg(email_path: str, claim_folder: str) -> Dict[str, Any]:
             "from": msg.sender,
             "to": msg.to,
             "subject": msg.subject,
-            "date": msg.date
+            "date": msg.date,
         }
 
-        # Body: .msg usually has plain text + HTML
-        body_text = msg.body or ""
-        if not body_text.strip() and msg.htmlBody:
-            body_text = html_to_text(msg.htmlBody)
+        # Simple body extraction
+        body = msg.body or ""
+        if not body.strip() and msg.htmlBody:
+            body = html_to_text(msg.htmlBody)
 
         # Save attachments
         attachments = []
         for att in msg.attachments:
-            filename = att.longFilename or att.shortFilename
+            filename = att.longFilename or att.shortFilename or "attachment"
             safe_name = filename.replace("..", "").replace("/", "_")
-            att_path = os.path.join(claim_folder, safe_name)
+            save_path = os.path.join(claim_folder, safe_name)
 
-            with open(att_path, "wb") as out:
+            with open(save_path, "wb") as out:
                 out.write(att.data)
 
-            attachments.append(att_path)
-            logger.info(f"[EmailIngest] Saved .msg attachment: {att_path}")
-
-        embedded_email = detect_email_content(body_text)
+            attachments.append(save_path)
 
         return {
-            "body": body_text,
-            "attachments": attachments,
+            "type": "msg",
+            "body": body,
             "metadata": metadata,
-            "contains_embedded_email": embedded_email,
-            "type": "msg"
+            "attachments": attachments
         }
 
-    except Exception as e:
-        logger.error(f"[EmailIngest] Error parsing .msg file {email_path}: {e}")
+    except Exception:
         return {
+            "type": "msg",
             "body": "",
-            "attachments": [],
             "metadata": {},
-            "contains_embedded_email": False,
-            "type": "msg"
+            "attachments": []
         }
 
 
-# ----------------------------------------------------
-# Public API
-# ----------------------------------------------------
-def extract_email_content(email_path: str) -> Dict[str, Any]:
+# -------------------------------------------------
+# Public Function
+# -------------------------------------------------
+def extract_email_content(email_path: str):
     """
-    Return structured email extraction:
+    Always returns:
     {
-        "body": "<string>",
-        "attachments": ["paths"],
-        "metadata": {"from":..., "to":..., "subject":..., "date":...},
-        "contains_embedded_email": True/False,
-        "type": "eml|msg"
+        "type": "eml" | "msg",
+        "body": "...",
+        "metadata": {...},
+        "attachments": [...]
     }
     """
     claim_folder = os.path.dirname(email_path)
@@ -200,9 +160,14 @@ def extract_email_content(email_path: str) -> Dict[str, Any]:
     if email_path.lower().endswith(".eml"):
         return _parse_eml(email_path, claim_folder)
 
-    elif email_path.lower().endswith(".msg"):
+    if email_path.lower().endswith(".msg"):
         return _parse_msg(email_path, claim_folder)
 
-    else:
-        logger.error(f"[EmailIngest] Unsupported email file type: {email_path}")
-        return {}
+    # Unsupported
+    return {
+        "type": "unknown",
+        "body": "",
+        "metadata": {},
+        "attachments": []
+    }
+

@@ -1,831 +1,368 @@
+
+
+###############################Not giving better Result##########################################################
+
+
+
 # claim_pipeline/processing/decision_engine.py
 """
-Patched version to ensure all tests pass.
-Key fixes:
-- Missing required fields always force REVIEW.
-- High-risk damage keywords always force REVIEW, cannot be overridden.
-- Validator recommendations cannot override missing/high-risk review.
-- llm_available is recomputed inside decide_claim(), so force_ai=True
-  with no API key does NOT call Groq.
+Tiny, crash-proof decision engine for the simplified claims pipeline.
+
+Improved behavior:
+- Prioritizes normalized/canonical fields from the extractor/normalizer.
+- Ignores "FOR OFFICE USE" or "Approved Amount:" placeholders when extracting amounts from text.
+- Falls back to summary/validation raw text only when structured fields are missing.
+- Honors validation.recommendation when present (as a soft override).
+- Returns a deterministic, stable output schema.
 """
 
-from __future__ import annotations
-import os
-import json
-import logging
-import re
-import time
 from typing import Dict, Any, List, Optional
-
-from dotenv import load_dotenv
-load_dotenv()
-
-# ------------------------------------------------
-# Config
-# ------------------------------------------------
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
-LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "400"))
-LLM_RETRY_COUNT = int(os.getenv("LLM_RETRY_COUNT", "2"))
-LLM_RETRY_BACKOFF = float(os.getenv("LLM_RETRY_BACKOFF", "1.0"))
-
-LOW_CONF_THRESHOLD = float(os.getenv("DECISION_LOW_CONF_THRESHOLD", "0.5"))
-AI_TRIGGER_CONF_THRESHOLD = float(os.getenv("DECISION_AI_TRIGGER_CONF", "0.75"))
-LOG_LEVEL = os.getenv("DECISION_LOG_LEVEL", "INFO")
-
-# ------------------------------------------------
-# Logger
-# ------------------------------------------------
-logger = logging.getLogger("decision_engine")
-logger.setLevel(LOG_LEVEL)
-if not logger.handlers:
-    ch = logging.StreamHandler()
-    ch.setLevel(LOG_LEVEL)
-    ch.setFormatter(logging.Formatter("[decision_engine] %(levelname)s: %(message)s"))
-    logger.addHandler(ch)
-
-# ------------------------------------------------
-# Groq init (module-level)
-# ------------------------------------------------
-llm_client = None
-_llm_init_success = False
-if GROQ_API_KEY:
-    try:
-        from groq import Groq
-        llm_client = Groq(api_key=GROQ_API_KEY)
-        _llm_init_success = True
-        logger.info("Groq client initialized for decision engine.")
-    except:
-        _llm_init_success = False
-else:
-    _llm_init_success = False
+import re
 
 
-# ------------------------------------------------
-# JSON helpers
-# ------------------------------------------------
-def _extract_json_from_text(text: str) -> Optional[str]:
-    if not text:
-        return None
-    text = text.strip()
-    text = re.sub(r"^```json\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
-    start = text.find("{")
-    if start == -1:
-        return None
-    depth = 0
-    for i in range(start, len(text)):
-        ch = text[i]
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start:i + 1]
-    return None
-
-def _safe_json_load(s: str) -> Optional[Dict[str, Any]]:
-    if not s:
-        return None
-    try:
-        return json.loads(s)
-    except:
-        s2 = re.sub(r"'", '"', s)
-        s2 = re.sub(r",\s*([}\]])", r"\1", s2)
-        try:
-            return json.loads(s2)
-        except:
-            return None
-
-
-# ------------------------------------------------
-# Field helpers
-# ------------------------------------------------
-def _get_field_value(field: str, fields_struct: Dict[str, Any], validation: Dict[str, Any]):
-    norm = validation.get("normalized", {})
-    if field + "_value" in norm and norm[field + "_value"] is not None:
-        return norm[field + "_value"]
-
-    vfields = validation.get("fields") or {}
-    if field in vfields and isinstance(vfields[field], dict):
-        if vfields[field].get("value") is not None:
-            return vfields[field]["value"]
-
-    if field in fields_struct:
-        f = fields_struct[field]
-        if isinstance(f, dict):
-            if f.get("value") is not None:
-                return f["value"]
-            if f.get("canonical") is not None:
-                return f["canonical"]
-        else:
-            return f
-
-    return None
-
-def _get_field_score(field: str, fields_struct: Dict[str, Any], validation: Dict[str, Any]) -> float:
-    vfields = validation.get("fields") or {}
-    if field in vfields and isinstance(vfields[field], dict):
-        sc = vfields[field].get("score")
-        if sc is not None:
-            try:
-                return float(sc)
-            except:
-                pass
-
-    if field in fields_struct and isinstance(fields_struct[field], dict):
-        sc = fields_struct[field].get("score")
-        if sc is not None:
-            try:
-                return float(sc)
-            except:
-                pass
-
-    return 0.0
-
-
-# ------------------------------------------------
-# RULE-BASED DECISION
-# ------------------------------------------------
-def rule_based_decision(fields_struct: Dict[str, Any], validation: Dict[str, Any]):
-    logger.debug("Running rule-based decision logic.")
-
-    issues = validation.get("issues", []) or []
-    missing = validation.get("missing_required", []) or []
-
-    claim_amt = _get_field_value("amount_estimated", fields_struct, validation)
-    insured_amt = _get_field_value("insured_amount", fields_struct, validation)
-
-    try:
-        if claim_amt is not None:
-            claim_amt = float(claim_amt)
-    except:
-        claim_amt = None
-
-    try:
-        if insured_amt is not None:
-            insured_amt = float(insured_amt)
-    except:
-        insured_amt = None
-
-    # Confidence penalty fields
-    low_conf_fields = [
-        f for f in fields_struct
-        if _get_field_score(f, fields_struct, validation) < LOW_CONF_THRESHOLD
-    ]
-
-    flags = []
-    reasons = []
-    decision = "review"      # Default
-    confidence = 0.6
-
-    # ------------------------------------------
-    # HARD OVERRIDE 1: Missing required ALWAYS forces REVIEW
-    # ------------------------------------------
-    if missing:
-        decision = "review"
-        flags.append("missing_fields")
-        reasons.append("Missing required fields: " + ", ".join(missing))
-
-    # ------------------------------------------
-    # Amount logic ONLY applies when no missing fields
-    # ------------------------------------------
-    if not missing:
-        if claim_amt is not None and insured_amt is not None:
-            ratio = claim_amt / insured_amt if insured_amt > 0 else None
-            if ratio is not None:
-                if ratio > 1.0:
-                    decision = "reject"
-                    flags.append("over_limit")
-                    reasons.append("Claimed amount exceeds insured amount.")
-                    confidence = 0.95
-                elif ratio >= 0.9:
-                    decision = "review"
-                    flags.append("near_limit")
-                    reasons.append("Claim amount near insured limit.")
-                    confidence = 0.8
-                else:
-                    decision = "approve"
-                    flags.append("within_limit")
-                    reasons.append("Claim amount within insured limit.")
-                    confidence = 0.9
-        else:
-            # missing monetary info
-            if claim_amt is None:
-                flags.append("no_claim_amount")
-                reasons.append("Claim amount missing.")
-            if insured_amt is None:
-                flags.append("no_insured_amount")
-                reasons.append("Insured amount missing.")
-
-    # ------------------------------------------
-    # HARD OVERRIDE 2: High-risk keywords ALWAYS force REVIEW
-    # ------------------------------------------
-    damage = fields_struct.get("damage", {})
-    dtext = ""
-    if isinstance(damage, dict):
-        dtext = (damage.get("canonical") or damage.get("value") or "") or ""
-    elif isinstance(damage, str):
-        dtext = damage or ""
-
-    if dtext:
-        dl = dtext.lower()
-        for kw in ("fire", "theft", "total loss", "arson"):
-            if kw in dl:
-                decision = "review"        # Hard override
-                flags.append("high_risk_keyword")
-                reasons.append(f"High risk keyword detected: {kw}")
-                confidence = max(confidence, 0.75)
-                break
-
-    # ------------------------------------------
-    # Validator recommendation CANNOT override missing/high-risk review
-    # ------------------------------------------
-    if "missing_fields" not in flags and "high_risk_keyword" not in flags:
-        vrec = validation.get("recommendation")
-        if vrec == "approve" and decision == "review":
-            if confidence >= 0.7:
-                decision = "approve"
-                reasons.append("Validator recommendation considered.")
-                confidence = max(confidence, 0.8)
-        elif vrec == "reject" and decision != "reject":
-            decision = "review"
-            reasons.append("Validator recommends reject; escalating.")
-            confidence = min(0.9, confidence + 0.1)
-
-    # ------------------------------------------
-    # Low-confidence penalty applies last
-    # ------------------------------------------
-    if low_conf_fields:
-        flags.append("low_confidence_fields")
-        reasons.append("Low confidence fields present.")
-        confidence = max(0.0, confidence - 0.15)
-
-    confidence = round(min(max(confidence, 0.0), 1.0), 2)
-
-    return {
-        "decision": decision,
-        "reason": " ".join(reasons) if reasons else "Rule-based decision.",
-        "confidence": confidence,
-        "flags": flags,
-        "requires_human": (decision == "review"),
-        "source": "rule",
-        "decision_evidence": {
-            "claim_amount": claim_amt,
-            "insured_amount": insured_amt,
-            "low_conf_fields": low_conf_fields,
-            "missing_required": missing,
-            "issues": issues,
-            "flags": flags
+# ---------- helpers ----------
+def _get_field_dict(fields: Dict[str, Any], name: str) -> Dict[str, Any]:
+    """Return a field dict (or simple wrapper) with consistent keys."""
+    f = fields.get(name)
+    if isinstance(f, dict):
+        # ensure keys exist
+        return {
+            "value": f.get("value"),
+            "canonical": f.get("canonical"),
+            "original": f.get("original", f.get("value")),
+            "success": f.get("success", True) if "success" in f else bool(f.get("value")),
+            "notes": f.get("notes", None),
+            "method": f.get("method", None),
         }
-    }
+    else:
+        return {"value": f, "canonical": f, "original": f, "success": bool(f)}
 
 
-# ------------------------------------------------
-# AI DECISION CALL
-# ------------------------------------------------
-def _build_ai_prompt_for_decision(fields_struct, validation, summary):
-    compact = {}
-    for k, v in fields_struct.items():
-        if isinstance(v, dict):
-            compact[k] = {
-                "value": v.get("value"),
-                "canonical": v.get("canonical"),
-                "score": v.get("score"),
-                "confidence": v.get("confidence")
+def _to_float_safe(s: Optional[Any]) -> Optional[float]:
+    """Try to convert a string/number to float. Returns None on failure."""
+    if s is None:
+        return None
+    try:
+        # Accept already numeric types
+        if isinstance(s, (int, float)):
+            return float(s)
+        st = str(s).strip()
+        # clear common currency symbols and spaces/commas
+        st = re.sub(r"[₹Rs\.\s,INR\$]+", "", st, flags=re.IGNORECASE)
+        # if empty after cleaning, bail
+        if st == "":
+            return None
+        return float(st)
+    except Exception:
+        return None
+
+
+def _low_confidence_fields(fields: Dict[str, Any]) -> List[str]:
+    """
+    Return list of fields that were attempted but marked not-successful.
+    (Normalization attempted but success==False.)
+    """
+    low = []
+    for name, f in fields.items():
+        if isinstance(f, dict):
+            success = f.get("success", True)
+            orig = f.get("original", "")
+            if not success and orig not in (None, "", []):
+                low.append(name)
+    return low
+
+
+def _strip_office_use(text: str) -> str:
+    """
+    Remove / truncate everything after 'FOR OFFICE USE' or similar headers
+    to avoid reading placeholders such as 'Approved Amount:' in the footer.
+    """
+    if not text:
+        return ""
+    # patterns that denote the office-use area (case-insensitive)
+    markers = [
+        r"for office use only",
+        r"for office use",
+        r"office use only",
+        r"approved amount[:\s]*$",
+        r"approved amount[:\s]",
+    ]
+    txt = text
+    for m in markers:
+        # find marker position (ignore case)
+        idx = re.search(m, txt, flags=re.IGNORECASE)
+        if idx:
+            pos = idx.start()
+            txt = txt[:pos]
+    return txt
+
+
+def _find_amounts_in_text(text: str) -> List[float]:
+    """
+    Find plausible numeric amounts in supplied text (excluding office-use).
+    Returns list of floats parsed from the text; empty list if none found.
+    """
+    if not text:
+        return []
+    t = _strip_office_use(text)
+    # look for patterns like ₹45,000 or Rs. 45,000 or 45000.00 or $1,234
+    pat = re.compile(
+        r"(?:₹|Rs\.?|INR|\$)?\s*([0-9]{1,3}(?:[,\s][0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)",
+        flags=re.IGNORECASE,
+    )
+    out: List[float] = []
+    for m in pat.finditer(t):
+        num = m.group(1)
+        try:
+            # strip commas/spaces then parse
+            val = float(re.sub(r"[,\s]", "", num))
+            out.append(val)
+        except Exception:
+            continue
+    return out
+
+
+# ---------- rule-based decision (improved) ----------
+def rule_based_decision(fields: Dict[str, Any], validation: Optional[Dict[str, Any]] = None,
+                        summary: Optional[Dict[str, Any]] = None, full_text: Optional[str] = None) -> Dict[str, Any]:
+    """
+    fields: normalized field dicts (as produced by extractor+normalizer)
+    validation: optional validation result (may contain recommendation)
+    summary: optional summary dict (LLM) - may include 'summary' string
+    full_text: optional full raw text (if available) to search for amounts
+    """
+
+    reasons: List[str] = []
+    flags: List[str] = []
+
+    # --- pick amounts (priority: canonical -> value -> validation -> summary -> raw text) ---
+    amt_val = None
+    insured_val = None
+
+    # helper to fetch candidate
+    def _candidate_amount(field_name: str) -> Optional[float]:
+        f = _get_field_raw(fields, field_name)
+        # canonical first
+        if f.get("canonical"):
+            v = _to_float_safe(f.get("canonical"))
+            if v is not None:
+                return v
+        # then value
+        if f.get("value"):
+            v = _to_float_safe(f.get("value"))
+            if v is not None:
+                return v
+        # then original text
+        if f.get("original"):
+            v = _to_float_safe(f.get("original"))
+            if v is not None:
+                return v
+        return None
+
+    # small wrapper to create a consistent dict for a field
+    def _get_field_raw(fields_dict: Dict[str, Any], name: str) -> Dict[str, Any]:
+        f = fields_dict.get(name)
+        if isinstance(f, dict):
+            return {
+                "value": f.get("value"),
+                "canonical": f.get("canonical"),
+                "original": f.get("original", f.get("value")),
+                "success": f.get("success", bool(f.get("value"))),
             }
         else:
-            compact[k] = {"value": v, "canonical": v}
+            return {"value": f, "canonical": f, "original": f, "success": bool(f)}
 
-    return (
-        "You are a claims reviewer.\n"
-        "Return ONLY a JSON object with keys {decision,reason,confidence}.\n\n"
-        "FIELDS:\n" + json.dumps(compact, indent=2) + "\n\n"
-        "VALIDATION:\n" + json.dumps(validation, indent=2) + "\n\n"
-        "SUMMARY:\n" + json.dumps(summary or {}, indent=2)
-    )
+    # Use local wrapper
+    _get_field_raw = _get_field_raw  # type: ignore
 
-def _call_groq_decision(prompt: str):
-    if not llm_client:
-        return None
+    # try direct extraction
+    amt_val = _candidate_amount("amount_estimated")
+    insured_val = _candidate_amount("insured_amount")
+
+    # fallback: validation object may have normalized canonical values (common in pipeline)
+    if (amt_val is None or insured_val is None) and isinstance(validation, dict):
+        # some validation outputs store normalized values under different keys; try to read them safely
+        try:
+            vmap = validation.get("fields", {}) if isinstance(validation.get("fields", {}), dict) else {}
+            if amt_val is None:
+                cand = vmap.get("amount_estimated") or vmap.get("amount") or {}
+                if isinstance(cand, dict):
+                    amt_val = _to_float_safe(cand.get("value") or cand.get("canonical") or cand.get("original"))
+                else:
+                    amt_val = _to_float_safe(cand)
+            if insured_val is None:
+                cand2 = vmap.get("insured_amount") or {}
+                if isinstance(cand2, dict):
+                    insured_val = _to_float_safe(cand2.get("value") or cand2.get("canonical") or cand2.get("original"))
+                else:
+                    insured_val = _to_float_safe(cand2)
+        except Exception:
+            pass
+
+    # fallback: summary text or raw_text search (but exclude office-use)
+    if (amt_val is None or insured_val is None):
+        search_text = ""
+        if isinstance(summary, dict) and summary.get("summary"):
+            search_text += "\n" + str(summary.get("summary"))
+        if full_text:
+            search_text += "\n" + str(full_text)
+        # find numeric amounts in text (outside office-use)
+        found_amounts = _find_amounts_in_text(search_text)
+        if found_amounts:
+            # heuristic: largest number -> insured amount, smaller -> estimated amount (if both missing)
+            found_amounts = sorted(found_amounts, reverse=True)
+            if insured_val is None and len(found_amounts) >= 1:
+                insured_val = insured_val or float(found_amounts[0])
+            if amt_val is None and len(found_amounts) >= 2:
+                amt_val = amt_val or float(found_amounts[1])
+            # if only one found and one of the fields missing, prefer smaller -> estimated
+            if len(found_amounts) == 1:
+                if amt_val is None and insured_val is None:
+                    # can't tell for sure — treat single as amount_estimated (safer)
+                    amt_val = float(found_amounts[0])
+
+    # now we have numeric amt_val and insured_val possibly None
+    # record evidence
+    evidence = {"amount": amt_val, "insured_amount": insured_val, "low_confidence_fields": _low_confidence_fields(fields)}
+
+    # --- early override: if validation has explicit recommendation, respect it (soft override) ---
+    if isinstance(validation, dict):
+        rec = validation.get("recommendation") or validation.get("recommendation", None)
+        if isinstance(rec, str) and rec.lower() in ("approve", "reject", "review"):
+            # if validator approved and we don't have a clear contradiction, honor it
+            if rec.lower() == "approve":
+                # ensure not an obvious contradiction (like claimed > insured)
+                if amt_val is not None and insured_val is not None and amt_val > insured_val:
+                    # contradiction -> continue normal flow (do not blindly approve)
+                    pass
+                else:
+                    return {
+                        "decision": "approve",
+                        "confidence": 0.92,
+                        "requires_human": False if not evidence["low_confidence_fields"] else True,
+                        "reasons": ["validator_recommendation_approve"],
+                        "evidence": evidence,
+                        "flags": ["validator_approve"]
+                    }
+            elif rec.lower() == "reject":
+                return {
+                    "decision": "reject",
+                    "confidence": 0.92,
+                    "requires_human": False,
+                    "reasons": ["validator_recommendation_reject"],
+                    "evidence": evidence,
+                    "flags": ["validator_reject"]
+                }
+            # if validator said 'review' we'll continue with normal logic but take note
+            if rec.lower() == "review":
+                # don't override; but add reason note later
+                pass
+
+    # --- core decisioning (conservative) ---
+    reasons: List[str] = []
+    flags: List[str] = []
+    decision = "review"
+    confidence = 0.6
+
+    # missing both amounts -> review
+    if amt_val is None and insured_val is None:
+        decision = "review"
+        confidence = 0.45
+        reasons.append("amount_and_insured_missing")
+        flags.append("missing_amounts")
+    elif amt_val is None and insured_val is not None:
+        # insured available but claimed amount missing -> review but less severe
+        decision = "review"
+        confidence = 0.55
+        reasons.append("claimed_amount_missing")
+        flags.append("missing_claim_amount")
+    elif amt_val is not None and insured_val is None:
+        # claimed amount present but insured not present -> review, require human
+        decision = "review"
+        confidence = 0.55
+        reasons.append("insured_amount_missing")
+        flags.append("missing_insured_amount")
+    else:
+        # both present -> numeric checks
+        # non-positive claimed amount
+        if amt_val <= 0:
+            decision = "reject"
+            confidence = 0.98
+            reasons.append("non_positive_claim_amount")
+            flags.append("invalid_amount")
+        elif insured_val <= 0:
+            decision = "review"
+            confidence = 0.5
+            reasons.append("invalid_insured_amount")
+            flags.append("invalid_insured")
+        elif amt_val > insured_val:
+            decision = "reject"
+            confidence = 0.98
+            reasons.append("claimed_amount_exceeds_insured")
+            flags.append("over_limit")
+        else:
+            ratio = amt_val / insured_val if insured_val > 0 else 0.0
+            # if claim is very close to limit -> review
+            if ratio >= 0.9:
+                decision = "review"
+                confidence = 0.75
+                reasons.append("amount_close_to_insured_limit")
+                flags.append("near_limit")
+            else:
+                # normal within-limit small claim -> approve
+                decision = "approve"
+                confidence = 0.9
+                reasons.append("amount_within_insured_limit")
+                flags.append("within_limit")
+
+    # penalize if many low-confidence fields were reported by normalizer
+    low_conf = evidence.get("low_confidence_fields", [])
+    if low_conf:
+        # drop confidence and require human if not already
+        confidence = max(0.0, confidence - 0.2)
+        if "low_confidence_fields_present" not in reasons:
+            reasons.append("low_confidence_fields_present")
+        if "low_confidence" not in flags:
+            flags.append("low_confidence")
+
+    # if validation recommended review earlier, keep a note
+    if isinstance(validation, dict) and validation.get("recommendation") and validation.get("recommendation").lower() == "review":
+        if "validator_suggests_review" not in reasons:
+            reasons.append("validator_suggests_review")
+        if "validator_review" not in flags:
+            flags.append("validator_review")
+
+    # ensure confidence bounds [0,1]
+    confidence = max(0.0, min(1.0, float(confidence)))
+
+    output = {
+        "decision": decision,
+        "confidence": round(confidence, 2),
+        "requires_human": (decision == "review") or (len(low_conf) > 0),
+        "reasons": reasons,
+        "evidence": evidence,
+        "flags": flags,
+    }
+    return output
+
+
+# ---------- public entry ----------
+def decide_claim(fields: Dict[str, Any], validation: Optional[Dict[str, Any]] = None,
+                 summary: Optional[Dict[str, Any]] = None, full_text: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Public API: fields is expected to be the normalized fields dict used elsewhere.
+    validation, summary, full_text are optional inputs that help the decision logic.
+    """
     try:
-        resp = llm_client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": "Return JSON only."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=LLM_TEMPERATURE,
-            max_tokens=LLM_MAX_TOKENS
-        )
-        return resp.choices[0].message.content
-    except:
-        return None
+        return rule_based_decision(fields=fields, validation=validation, summary=summary, full_text=full_text)
+    except Exception:
+        # defensive fallback: never raise, keep pipeline stable
+        return {
+            "decision": "review",
+            "confidence": 0.4,
+            "requires_human": True,
+            "reasons": ["decision_engine_error"],
+            "evidence": {"amount": None, "insured_amount": None, "low_confidence_fields": []},
+            "flags": ["engine_error"]
+        }
 
-
-# ------------------------------------------------
-# TOP-LEVEL DECISION
-# ------------------------------------------------
-def decide_claim(fields_struct, validation, summary=None, force_ai=False):
-    logger.info("Starting claim decisioning.")
-
-    # Recompute llm availability dynamically (fix for test #3)
-    dynamic_llm_available = bool(os.getenv("GROQ_API_KEY") and _llm_init_success)
-
-    # Always start with rule decision
-    rule_res = rule_based_decision(fields_struct, validation)
-    decision = rule_res["decision"]
-    confidence = rule_res["confidence"]
-
-    # Determine whether to call AI
-    need_ai = False
-    if force_ai and dynamic_llm_available:
-        need_ai = True
-    elif decision == "review" and dynamic_llm_available:
-        need_ai = True
-    elif confidence < AI_TRIGGER_CONF_THRESHOLD and dynamic_llm_available:
-        need_ai = True
-
-    # If no AI available → always return rule
-    if not dynamic_llm_available:
-        rule_res["source"] = "rule"
-        return rule_res
-
-    if need_ai:
-        prompt = _build_ai_prompt_for_decision(fields_struct, validation, summary)
-        text = _call_groq_decision(prompt)
-        if text:
-            js = _extract_json_from_text(text) or text
-            parsed = _safe_json_load(js)
-            if parsed:
-                final = rule_res.copy()
-                final.update({
-                    "decision": parsed.get("decision", decision),
-                    "reason": parsed.get("reason", rule_res["reason"]),
-                    "confidence": max(confidence, parsed.get("confidence", confidence)),
-                    "source": "rule+ai"
-                })
-                return final
-
-    rule_res["source"] = "rule"
-    return rule_res
-
-
-# # claim_pipeline/processing/decision_engine.py
-# """
-# Decision engine for claims pipeline — improved, Groq-only, structured-fields aware.
-
-# Improvements implemented (requested):
-# - Accepts normalized structured fields (not raw strings)
-# - Uses validation.normalized and validation.fields outputs when available
-# - Converts hardcoded text checks to structured access (uses canonical/value)
-# - Groq-only (no OpenAI branches)
-# - JSON-safe extraction for LLM outputs (same helpers as summarizer/ai_infer)
-# - Uses AI summary when available (does not rebuild reasoning)
-# - Emits evidence flags based on per-field confidence/score
-# - Produces fully structured final output consistent with summarizer
-# - Uses strict JSON extraction & validation for AI responses
-# - AI reasoning prompt uses structured fields + validation (not raw dumps)
-# - Treats validator.recommendation as a weight (not an override)
-# - Uses logging (no prints)
-# - Adds a decision_evidence block for auditability
-# - Keeps "escalate" only for explicit high-risk patterns + low confidence
-# - AI reasoning is optional and auto-triggers based on configurable confidence threshold
-# """
-
-# from __future__ import annotations
-# import os
-# import json
-# import logging
-# import re
-# import time
-# from typing import Dict, Any, List, Optional
-
-# from dotenv import load_dotenv
-
-# load_dotenv()
-
-# # -----------------------
-# # Config
-# # -----------------------
-# GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-# LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
-# LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
-# LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "400"))
-# LLM_RETRY_COUNT = int(os.getenv("LLM_RETRY_COUNT", "2"))
-# LLM_RETRY_BACKOFF = float(os.getenv("LLM_RETRY_BACKOFF", "1.0"))
-
-# LOW_CONF_THRESHOLD = float(os.getenv("DECISION_LOW_CONF_THRESHOLD", "0.5"))
-# AI_TRIGGER_CONF_THRESHOLD = float(os.getenv("DECISION_AI_TRIGGER_CONF", "0.75"))
-
-# LOG_LEVEL = os.getenv("DECISION_LOG_LEVEL", "INFO")
-
-# # -----------------------
-# # Logger
-# # -----------------------
-# logger = logging.getLogger("decision_engine")
-# logger.setLevel(LOG_LEVEL)
-# if not logger.handlers:
-#     ch = logging.StreamHandler()
-#     ch.setLevel(LOG_LEVEL)
-#     formatter = logging.Formatter("[decision_engine] %(levelname)s: %(message)s")
-#     ch.setFormatter(formatter)
-#     logger.addHandler(ch)
-
-# # -----------------------
-# # Groq client init (Groq-only)
-# # -----------------------
-# llm_client = None
-# llm_available = False
-# if GROQ_API_KEY:
-#     try:
-#         from groq import Groq
-#         llm_client = Groq(api_key=GROQ_API_KEY)
-#         llm_available = True
-#         logger.info("Groq client initialized for decision engine.")
-#     except Exception as e:
-#         logger.warning(f"Failed to init Groq client: {e}")
-#         llm_client = None
-#         llm_available = False
-# else:
-#     logger.info("GROQ_API_KEY not set — running in rule-only mode.")
-
-# # -----------------------
-# # JSON extraction helpers (robust)
-# # -----------------------
-# def _extract_json_from_text(text: str) -> Optional[str]:
-#     if not text:
-#         return None
-#     text = text.strip()
-#     text = re.sub(r"^```json\s*", "", text, flags=re.IGNORECASE)
-#     text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
-#     start = text.find("{")
-#     if start == -1:
-#         return None
-#     depth = 0
-#     for i in range(start, len(text)):
-#         ch = text[i]
-#         if ch == "{":
-#             depth += 1
-#         elif ch == "}":
-#             depth -= 1
-#             if depth == 0:
-#                 return text[start:i + 1]
-#     return None
-
-# def _safe_json_load(s: str) -> Optional[Dict[str, Any]]:
-#     if not s:
-#         return None
-#     try:
-#         return json.loads(s)
-#     except Exception:
-#         s2 = re.sub(r"'", '"', s)
-#         s2 = re.sub(r",\s*([}\]])", r"\1", s2)
-#         try:
-#             return json.loads(s2)
-#         except Exception:
-#             return None
-
-# # -----------------------
-# # Utility: extract canonical/value from structured fields/validation
-# # -----------------------
-# def _get_field_value(field: str, fields_struct: Dict[str, Any], validation: Dict[str, Any]) -> Any:
-#     """
-#     Resolve the most reliable numeric/string value for `field`.
-#     Order:
-#       1. validation['normalized'][f'{field}_value'] if present (legacy numeric normalizer)
-#       2. validation['fields'][field]['value'] (structured normalizer output)
-#       3. fields_struct[field]['value'] (main structured fields)
-#       4. fields_struct[field]['canonical'] or raw fallback
-#     """
-#     # 1) normalized numeric fallback (legacy)
-#     norm = validation.get("normalized", {}) if isinstance(validation, dict) else {}
-#     val_key = f"{field}_value"
-#     if isinstance(norm, dict) and val_key in norm and norm[val_key] is not None:
-#         return norm[val_key]
-
-#     # 2) validation.fields structured
-#     vfields = validation.get("fields") or {}
-#     if isinstance(vfields, dict) and field in vfields:
-#         fv = vfields[field]
-#         if isinstance(fv, dict) and fv.get("value") is not None:
-#             return fv.get("value")
-
-#     # 3) top-level fields_struct
-#     if isinstance(fields_struct, dict) and field in fields_struct:
-#         fs = fields_struct[field]
-#         if isinstance(fs, dict):
-#             if fs.get("value") is not None:
-#                 return fs.get("value")
-#             if fs.get("canonical") is not None:
-#                 return fs.get("canonical")
-#         else:
-#             # raw str
-#             return fs
-
-#     return None
-
-# def _get_field_score(field: str, fields_struct: Dict[str, Any], validation: Dict[str, Any]) -> float:
-#     """
-#     Return a 0-1 numeric confidence/score for the field, if available.
-#     Checks in structured spots; defaults to 0.0
-#     """
-#     # check validation.fields
-#     vfields = validation.get("fields") or {}
-#     if isinstance(vfields, dict) and field in vfields:
-#         fs = vfields[field]
-#         if isinstance(fs, dict) and fs.get("score") is not None:
-#             try:
-#                 return float(fs.get("score"))
-#             except Exception:
-#                 pass
-#     # check fields_struct
-#     if isinstance(fields_struct, dict) and field in fields_struct:
-#         fs = fields_struct[field]
-#         if isinstance(fs, dict) and fs.get("score") is not None:
-#             try:
-#                 return float(fs.get("score"))
-#             except Exception:
-#                 pass
-#     # check validation.normalized numeric confidence mapping (not exact)
-#     # fallback: try simple mapping from confidence label if present
-#     vnorm = validation.get("normalized", {}) or {}
-#     if isinstance(vnorm, dict):
-#         # no general mapping; return 0.0
-#         pass
-#     return 0.0
-
-# # -----------------------
-# # Rule-based decision logic (uses structured access)
-# # -----------------------
-# def rule_based_decision(fields_struct: Dict[str, Any], validation: Dict[str, Any]) -> Dict[str, Any]:
-#     """
-#     Deterministic rule-based decision using structured fields + validation.
-#     Returns structured result with decision_evidence and flags.
-#     """
-#     logger.debug("Running rule-based decision logic.")
-#     issues = validation.get("issues", []) or []
-#     missing = validation.get("missing_required", []) or []
-#     validator_reco = validation.get("recommendation", None)
-
-#     # resolve key numeric values using helper
-#     claim_amt = _get_field_value("amount_estimated", fields_struct, validation)
-#     insured_amt = _get_field_value("insured_amount", fields_struct, validation)
-#     # ensure numeric if possible
-#     try:
-#         if claim_amt is not None:
-#             claim_amt = float(claim_amt)
-#     except Exception:
-#         claim_amt = None
-#     try:
-#         if insured_amt is not None:
-#             insured_amt = float(insured_amt)
-#     except Exception:
-#         insured_amt = None
-
-#     # evidence flags (based on confidence)
-#     low_conf_fields = []
-#     for fkey in (list(fields_struct.keys()) if isinstance(fields_struct, dict) else []):
-#         score = _get_field_score(fkey, fields_struct, validation)
-#         if score and score < LOW_CONF_THRESHOLD:
-#             low_conf_fields.append(fkey)
-
-#     flags: List[str] = []
-#     reasons: List[str] = []
-#     decision = "review"
-#     confidence = 0.6
-
-#     if missing:
-#         flags.append("missing_fields")
-#         reasons.append(f"Missing required fields: {', '.join(missing)}")
-
-#     if issues:
-#         flags.append("data_issues")
-#         reasons.append(f"Issues: {', '.join(issues)}")
-
-#     # amount logic (if both are available)
-#     if claim_amt is not None and insured_amt is not None:
-#         ratio = claim_amt / insured_amt if insured_amt > 0 else None
-#         if ratio is not None:
-#             if ratio > 1.0:
-#                 flags.append("over_limit")
-#                 reasons.append("Claimed amount exceeds insured amount.")
-#                 decision = "reject"
-#                 confidence = 0.95
-#             elif ratio >= 0.9:
-#                 flags.append("near_limit")
-#                 reasons.append("Claim amount is close to insured limit.")
-#                 decision = "review"
-#                 confidence = 0.8
-#             else:
-#                 flags.append("within_limit")
-#                 reasons.append("Claim amount within insured limit.")
-#                 decision = "approve"
-#                 confidence = 0.9
-#     else:
-#         # missing monetary info -> cannot auto-approve
-#         if not claim_amt:
-#             flags.append("no_claim_amount")
-#             reasons.append("Claim amount not available or parseable.")
-#         if not insured_amt:
-#             flags.append("no_insured_amount")
-#             reasons.append("Insured amount unknown.")
-
-#     # high-risk keywords in damage description (use structured canonical text)
-#     damage_text = None
-#     fd = fields_struct.get("damage") if isinstance(fields_struct, dict) else None
-#     if isinstance(fd, dict):
-#         damage_text = (fd.get("canonical") or fd.get("value") or "")
-#     elif isinstance(fd, str):
-#         damage_text = fd
-#     if damage_text:
-#         dt_low = damage_text.lower()
-#         for kw in ("fire", "theft", "total loss", "arson"):
-#             if kw in dt_low:
-#                 flags.append("high_risk_keyword")
-#                 reasons.append(f"High risk keyword detected: {kw}")
-#                 # escalate only if combined with low confidence or missing fields
-#                 if low_conf_fields or missing:
-#                     decision = "review"
-#                     confidence = min(0.85, max(confidence, 0.7))
-#                 else:
-#                     decision = "review"
-#                     confidence = max(confidence, 0.75)
-#                 break
-
-#     # incorporate validator recommendation as weight (do not blindly override)
-#     if validator_reco:
-#         if validator_reco == "reject" and decision != "reject":
-#             # increase severity but check confidence
-#             decision = "review" if confidence < 0.85 else "reject"
-#             reasons.append("Validator recommended reject; escalated severity.")
-#             confidence = min(0.9, confidence + 0.1)
-#         elif validator_reco == "approve" and decision == "review":
-#             # allow validator to tip toward approve if confidence is moderate
-#             if confidence >= 0.7:
-#                 decision = "approve"
-#                 reasons.append("Validator recommended approve; tipping to approve.")
-#                 confidence = max(confidence, 0.8)
-#         # otherwise keep rule decision but note validator advice
-#         else:
-#             reasons.append(f"Validator suggests: {validator_reco}")
-
-#     # adjust confidence down for low-confidence fields
-#     if low_conf_fields:
-#         flags.append("low_confidence_fields")
-#         reasons.append(f"Low confidence fields: {', '.join(low_conf_fields)}")
-#         confidence = max(0.0, confidence - 0.15)
-
-#     # ensure confidence in 0..1
-#     confidence = round(max(0.0, min(1.0, float(confidence))), 2)
-
-#     requires_human = decision in ("review",)
-
-#     # Decision evidence block (audit-friendly)
-#     decision_evidence = {
-#         "claim_amount": claim_amt,
-#         "insured_amount": insured_amt,
-#         "low_conf_fields": low_conf_fields,
-#         "missing_required": missing,
-#         "issues": issues,
-#         "flags": flags
-#     }
-
-#     result = {
-#         "decision": decision,
-#         "reason": " ".join(reasons) if reasons else "Rule-based decision completed.",
-#         "confidence": confidence,
-#         "flags": flags,
-#         "requires_human": requires_human,
-#         "source": "rule",
-#         "decision_evidence": decision_evidence
-#     }
-#     logger.debug("Rule decision result: %s", result)
-#     return result
-
-# # -----------------------
-# # AI-assisted decision (uses Groq; strict JSON parsing)
-# # -----------------------
-# def _build_ai_prompt_for_decision(fields_struct: Dict[str, Any], validation: Dict[str, Any], summary: Dict[str, Any]) -> str:
-#     """
-#     Build a compact, structured prompt for the LLM using canonical values,
-#     validation details and the AI summary (if available).
-#     """
-#     # compact fields: field -> canonical or value
-#     compact = {}
-#     for k, v in (fields_struct.items() if isinstance(fields_struct, dict) else []):
-#         if isinstance(v, dict):
-#             compact[k] = {
-#                 "value": v.get("value"),
-#                 "canonical": v.get("canonical"),
-#                 "score": v.get("score"),
-#                 "confidence": v.get("confidence")
-#             }
-#         else:
-#             compact[k] = {"value": v, "canonical": v, "score": None, "confidence": None}
-
-#     prompt = (
-#         "You are a senior insurance claims reviewer. Based on the structured fields, validation, and a short AI summary, "
-#         "recommend one of: approve | review | reject.\n\n"
-#         "STRUCTURED_FIELDS:\n"
-#         f"{json.dumps(compact, indent=2, ensure_ascii=False)[:6000]}\n\n"
-#         "VALIDATION_SUMMARY:\n"
-#         f"{json.dumps({'issues': validation.get('issues',''), 'missing_required': validation.get('missing_required',''), 'recommendation': validation.get('recommendation','')}, indent=2)}\n\n"
-#         "AI_SUMMARY:\n"
-#         f"{json.dumps(summary, indent=2) if summary else 'N/A'}\n\n"
-#         "Return ONLY a JSON object with exactly the keys: {\"decision\": \"approve|review|reject\", "
-#         "\"reason\": \"short explanation (1-2 sentences)\", \"confidence\": 0.0-1.0}.\n"
-#     )
-#     return prompt
-
-# def _call_groq_decision(prompt: str) -> Optional[str]:
-#     if not llm_available or not llm_client:
-#         logger.debug("Groq not available — skipping AI decision call.")
-#         return None
-#     attempt = 0
-#     while attempt <= LLM_RETRY_COUNT:
-#         try:
-#             resp = llm_client.chat.completions.create(
-#                 model=LLM_MODEL,
-#                 messages=[
-#                     {"role": "system", "content": "You are a claims decision assistant. Return only JSON."},
-#                     {"role": "user", "content": prompt}
-#                 ],
-#                 temperature=LLM_TEMPERATURE,
-#                 max_tokens=LLM_MAX_TOKENS
-#             )
-#             text = resp.choices[0].message.content
-#             logger.info("Groq decision call succeeded.")
-#             return text
-#         except Exception as e:
-#             logger.warning("Groq decision call failed attempt %s: %s", attempt + 1, e)
-#             attempt += 1
-#             time.sleep(LLM_RETRY_BACKOFF * (2 ** (attempt - 1)))
-#     logger.error("Groq decision API failed after retries.")
-#     return None
-
-# # -----------------------
-# # Master decide_claim
-# # -----------------------
-# def decide_claim(fields_struct: Dict[str, Any],
-#                  validation: Dict[str, Any],
-#                  summary: Optional[Dict[str, Any]] = None,
-#                  force_ai: bool = False) -> Dict[str, Any]:
-#     """
-#     Entry point for claim decisioning.
-#     - fields_struct: structured fields from extractor/normalizer/ai_infer
-#     - validation: validator output
-#     - summary: AI summary (optional) from summarizer
-#     - force_ai: if True, always try AI reasoning (if Groq configured)
-#     """
-#     logger.info("Starting claim decisioning.")
-
-#     # 1) run rule-based decision first
-#     rule_res = rule_based_decision(fields_struct, validation)
-#     decision = rule_res["decision"]
-#     confidence = rule_res["confidence"]
-#     logger.info("Rule decision: %s (conf=%s)", decision, confidence)
-
-#     # 2) Decide whether to invoke AI reasoning
-#     need_ai = False
-#     if force_ai and llm_available:
-#         need_ai = True
-#     elif decision == "review" and llm_available:
-#         need_ai = True
-#     elif rule_res.get("decision_evidence", {}).get("low_conf_fields") and llm_available:
-#         # If many low-confidence fields, ask AI for help
-#         need_ai = True
-#     elif confidence < AI_TRIGGER_CONF_THRESHOLD and llm_available:
-#         need_ai = True
-
-#     if need_ai:
-#         logger.info("AI reasoning triggered (need_ai=True). Building prompt...")
-#         prompt = _build_ai_prompt_for_decision(fields_struct, validation, summary)
-#         llm_text = _call_groq_decision(prompt)
-#         if llm_text:
-#             json_block = _extract_json_from_text(llm_text)
-#             parsed = _safe_json_load(json_block) if json_block else _safe_json_load(llm_text)
-#             if parsed and isinstance(parsed, dict):
-#                 # merge: use AI decision but keep rule evidence
-#                 ai_dec = parsed.get("decision", rule_res["decision"])
-#                 ai_reason = parsed.get("reason", rule_res["reason"])
-#                 ai_conf = parsed.get("confidence", rule_res["confidence"])
-#                 final_conf = round(max(rule_res["confidence"], float(ai_conf or 0.0)), 2)
-#                 final = rule_res.copy()
-#                 final.update({
-#                     "decision": ai_dec,
-#                     "reason": ai_reason,
-#                     "confidence": final_conf,
-#                     "source": "rule+ai"
-#                 })
-#                 logger.info("AI reasoning applied. Final decision: %s (conf=%s)", final["decision"], final["confidence"])
-#                 return final
-#             else:
-#                 logger.warning("AI reasoning returned invalid JSON. Falling back to rule result.")
-#         else:
-#             logger.warning("No AI response. Falling back to rule result.")
-
-#     # No AI or AI not applied - return rule result
-#     rule_res["source"] = "rule"
-#     return rule_res

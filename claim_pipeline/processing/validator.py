@@ -1,39 +1,29 @@
 # claim_pipeline/processing/validator.py
 """
-Advanced validator for claims processing pipeline.
+Improved, robust validator for claim fields used by the claims pipeline.
 
-Expects the normalizer functions to return structured dicts with keys such as:
-{
-  "original": ...,
-  "value": ...,
-  "canonical": ...,
-  "confidence": "low"|"medium"|"high",
-  "score": 0.0-1.0,
-  "corrected": bool,
-  "notes": [...],
-  "metadata": {...}
-}
+Input: raw_fields (mapping field_name -> primitive value or None)
+This function will call the project's normalizers and return a structured validation dict.
 
-Produces a structured validation result:
+Output keys (kept compatible with pipeline expectations):
 {
-  "fields": { <field>: <normalized_dict>, ... },
-  "issues": [...],
-  "warnings": [...],
-  "notes": [...],
-  "missing_required": [...],
-  "ai_fields": [...],            # fields suggested for AI inference
-  "risk_score": 0.0-1.0,
-  "is_complete": bool,
-  "recommendation": "approve"|"review"|"reject"|"escalate",
-  "decision_reasons": [...],     # short explanation pieces
-  "explainability": { ... }      # metadata useful for audit/UI
+    "fields": { <field>: <normalized_dict>, ... },
+    "issues": [...],
+    "warnings": [...],
+    "missing_required": [...],
+    "risk_score": float(0..1),
+    "recommendation": "approve"|"review"|"reject",
+    "decision_reasons": [...],
+    # additional optional keys for explainability:
+    "is_complete": bool,
+    "explainability": { ... }
 }
 """
 
-import logging
 from typing import Dict, Any, List, Optional
+from datetime import datetime, timedelta
+import re
 
-# Import the structured normalizers (adjust package path if different)
 from claim_pipeline.processing.normalizer import (
     normalize_amount,
     normalize_date,
@@ -42,245 +32,300 @@ from claim_pipeline.processing.normalizer import (
     normalize_string,
 )
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+# Minimal required fields for a claim to be processable
+REQUIRED = ["claim_id", "policy_no", "date", "amount_estimated"]
+
+# thresholds
+LOW_CONF_SCORE = 0.6  # if normalizer had a numeric score lower than this consider low confidence
 
 
-# ----------------------
-# Configuration
-# ----------------------
-DEFAULT_REQUIRED_FIELDS = ["claim_id", "policy_no", "amount_estimated", "date"]
-LOW_CONFIDENCE_THRESHOLD = 0.5  # score below this is considered low confidence
-
-
-# ----------------------
-# Helper functions
-# ----------------------
-def _is_missing_or_empty(norm_field: Dict[str, Any]) -> bool:
-    return (not norm_field) or (norm_field.get("value") is None)
-
-
-def _is_low_confidence(norm_field: Dict[str, Any], thresh: float = LOW_CONFIDENCE_THRESHOLD) -> bool:
-    # Some normalizers may omit 'score' — treat missing score conservatively
-    score = norm_field.get("score") if isinstance(norm_field, dict) else None
-    if score is None:
-        # fallback to textual label if present
-        if norm_field.get("confidence") in ("low", None):
-            return True
-        return False
-    return float(score) < float(thresh)
-
-
-def _field_label(name: str) -> str:
-    # friendly labels for UI/logs
-    return name.replace("_", " ").title()
-
-
-# ----------------------
-# Main validation function
-# ----------------------
-def validate_claim_fields(raw_fields: Dict[str, Any], required_fields: Optional[List[str]] = None) -> Dict[str, Any]:
+def _as_norm_dict(norm_candidate: Any) -> Dict[str, Any]:
     """
-    Validate and return structured info including normalized values, issues, warnings,
-    risk score, AI-needed field list, and a recommendation.
+    Normalizer outputs may be:
+     - a dict like {"original","value","success","notes", ...}
+     - or a primitive value (string/None)
+    Normalize to a predictable dict shape for downstream logic.
     """
-    if required_fields is None:
-        required_fields = DEFAULT_REQUIRED_FIELDS
-
-    issues: List[str] = []
-    warnings: List[str] = []
-    notes: List[str] = []
-    decision_reasons: List[str] = []
-
-    # ----------------------
-    # Normalize all fields (using structured normalizers)
-    # ----------------------
-    # Each normalizer returns a structured dict as described in module docstring
-    fields: Dict[str, Dict[str, Any]] = {}
-
-    fields["claim_id"] = normalize_string(raw_fields.get("claim_id"))
-    fields["policy_no"] = normalize_string(raw_fields.get("policy_no"))
-    fields["claimant_name"] = normalize_string(raw_fields.get("claimant_name"))
-    fields["phone"] = normalize_phone(raw_fields.get("phone"))
-    fields["email"] = normalize_email(raw_fields.get("email"))
-    fields["vehicle"] = normalize_string(raw_fields.get("vehicle"))
-    fields["damage"] = normalize_string(raw_fields.get("damage"))
-    fields["date"] = normalize_date(raw_fields.get("date"))
-    fields["amount_estimated"] = normalize_amount(raw_fields.get("amount_estimated"))
-    fields["insured_amount"] = normalize_amount(raw_fields.get("insured_amount")) if raw_fields.get("insured_amount") else {
-        "original": None, "value": None, "canonical": None,
-        "confidence": "low", "score": 0.0, "corrected": False,
-        "notes": ["not_provided"], "metadata": {}
-    }
-
-    # ----------------------
-    # Basic presence & confidence checks
-    # ----------------------
-    ai_fields: List[str] = []  # fields recommended for AI inference/fallback
-
-    for fname, norm in fields.items():
-        # Missing critical field
-        if _is_missing_or_empty(norm):
-            issues.append(f"{fname}:missing")
-            logger.debug(f"[validator] Field missing: {fname}")
-        # Low confidence
-        if isinstance(norm, dict) and _is_low_confidence(norm):
-            warnings.append(f"{fname}:low_confidence")
-            # if missing or low confidence, request AI fallback
-            if norm.get("value") is None or norm.get("score", 0.0) < LOW_CONFIDENCE_THRESHOLD:
-                ai_fields.append(fname)
-        # If corrected by normalizer, surface as a warning
-        if isinstance(norm, dict) and norm.get("corrected"):
-            warnings.append(f"{fname}:auto_corrected")
-        # Keep notes from normalizer
-        if isinstance(norm, dict) and norm.get("notes"):
-            notes.extend([f"{fname}:{n}" for n in norm.get("notes")])
-
-    # ----------------------
-    # Business logic checks & cross-field validations
-    # ----------------------
-    # Amount consistency with insured_amount
-    amt = fields["amount_estimated"].get("value")
-    insured = fields["insured_amount"].get("value")
-    if amt is not None and insured is not None:
-        if amt > insured:
-            issues.append("amount_estimated_exceeds_insured_amount")
-            decision_reasons.append("Claimed amount exceeds insured amount.")
-            logger.info("[validator] Claimed amount exceeds insured amount.")
-
-    # Check zero or negative claim amount — suspicious/invalid
-    if amt is not None and amt <= 0:
-        issues.append("amount_nonpositive")
-        decision_reasons.append("Claimed amount is zero or negative.")
-        logger.info("[validator] Non-positive claimed amount detected.")
-
-    # Date checks: ensure parsed date is not in distant past/future
-    date_norm = fields["date"]
-    if date_norm and date_norm.get("value"):
-        try:
-            from datetime import datetime, timedelta
-            parsed_iso = date_norm["value"]
-            parsed_dt = datetime.fromisoformat(parsed_iso)
-            # if claim date > now + 1 day -> future date suspicious
-            if parsed_dt > (datetime.utcnow() + timedelta(days=1)):
-                warnings.append("date_in_future")
-                notes.append("Claim date is in the future.")
-            # if claim date older than, say, 5 years -> warn
-            if parsed_dt < (datetime.utcnow() - timedelta(days=365 * 5)):
-                warnings.append("date_old")
-                notes.append("Claim date is older than 5 years.")
-        except Exception:
-            warnings.append("date_validation_failed")
-
-    # Email/phone plausibility checks
-    email_norm = fields["email"]
-    if email_norm and email_norm.get("value"):
-        # suspicious domain heuristics can be added here (typosquatting)
-        domain = email_norm["value"].split("@")[-1]
-        if domain.endswith(".con") or domain.endswith(".cm"):
-            warnings.append("email_domain_suspicious")
-            notes.append(f"Suspicious email domain: {domain}")
-
-    phone_norm = fields["phone"]
-    if phone_norm and phone_norm.get("value"):
-        digits = phone_norm["value"]
-        # very basic invalid phone patterns
-        if set(digits) == {"0"} or set(digits) == {"1"}:
-            warnings.append("phone_suspicious")
-            notes.append("Phone number looks like a placeholder.")
-
-    # Duplicate/conflict detection (e.g., multiple policy numbers or claim ids in raw text)
-    # If field has raw_candidates in normalizer output, surface duplicates
-    for fname in ["policy_no", "claim_id", "phone", "email"]:
-        norm = fields.get(fname, {})
-        if isinstance(norm, dict):
-            candidates = norm.get("raw_candidates") or []
-            if len(candidates) > 1:
-                warnings.append(f"{fname}:multiple_candidates")
-                notes.append(f"{fname} found multiple candidates: {candidates}")
-
-    # ----------------------
-    # Completeness and required fields
-    # ----------------------
-    missing_required: List[str] = []
-    for r in required_fields:
-        # required check uses normalized .value presence
-        nf = fields.get(r)
-        if nf is None or nf.get("value") is None:
-            missing_required.append(r)
-
-    is_complete = len(missing_required) == 0
-
-    # ----------------------
-    # Risk scoring (simple heuristic aggregator)
-    # ----------------------
-    # Baseline
-    risk = 0.10
-    # Penalty for missing required fields
-    risk += 0.20 * len(missing_required)
-    # Penalty for issues
-    risk += 0.15 * sum(1 for i in issues)
-    # Penalty for low-confidence fields
-    low_conf_count = sum(1 for f in fields.values() if isinstance(f, dict) and _is_low_confidence(f))
-    risk += 0.05 * low_conf_count
-    # Penalty for amount/insured mismatch
-    if "amount_estimated_exceeds_insured_amount" in issues:
-        risk += 0.40
-    # Cap
-    risk_score = max(0.0, min(1.0, risk))
-
-    # ----------------------
-    # Decision logic (explainable)
-    # ----------------------
-    # Priority rules (reasons collected above)
-    recommendation = "approve"
-    explain_reasons: List[str] = []
-
-    # If critical issues exist, force reject
-    if any(k.startswith("amount_estimated_exceeds_insured_amount") or "amount_estimated_exceeds_insured_amount" in k for k in issues):
-        recommendation = "reject"
-        explain_reasons.append("Critical: claimed amount > insured amount.")
-    # If required fields missing -> review
-    elif missing_required:
-        recommendation = "review"
-        explain_reasons.append(f"Missing required fields: {', '.join(missing_required)}")
-    # Escalate for very high risk
-    elif risk_score >= 0.8:
-        recommendation = "escalate"
-        explain_reasons.append("Very high risk score.")
-    elif risk_score >= 0.6:
-        recommendation = "review"
-        explain_reasons.append("High risk score.")
-    else:
-        recommendation = "approve"
-        explain_reasons.append("Low risk; auto-approve.")
-
-    # Add warnings/issues reasons to explain_reasons
-    if warnings:
-        explain_reasons.append("Warnings present: " + "; ".join(warnings))
-    if issues:
-        explain_reasons.append("Issues present: " + "; ".join(issues))
-
-    # ----------------------
-    # Final structured response
-    # ----------------------
-    result: Dict[str, Any] = {
-        "fields": fields,
-        "issues": issues,
-        "warnings": warnings,
-        "notes": notes,
-        "missing_required": missing_required,
-        "ai_fields": sorted(list(set(ai_fields))),  # unique
-        "risk_score": round(risk_score, 3),
-        "is_complete": is_complete,
-        "recommendation": recommendation,
-        "decision_reasons": explain_reasons,
-        "explainability": {
-            "low_confidence_threshold": LOW_CONFIDENCE_THRESHOLD,
-            "required_fields": required_fields,
-            "field_scores": {k: (v.get("score") if isinstance(v, dict) else None) for k, v in fields.items()}
+    if isinstance(norm_candidate, dict):
+        return {
+            "original": norm_candidate.get("original", norm_candidate.get("value")),
+            "value": norm_candidate.get("value", None),
+            "success": bool(norm_candidate.get("success")) if "success" in norm_candidate else (norm_candidate.get("value") not in (None, "")),
+            "notes": norm_candidate.get("notes") if isinstance(norm_candidate.get("notes"), (list, str)) else [],
+            "confidence": norm_candidate.get("confidence", None),
+            "score": norm_candidate.get("score", None),
+            "raw_candidates": norm_candidate.get("raw_candidates", [])  # optional richer normalizers
         }
-    }
+    else:
+        return {
+            "original": norm_candidate,
+            "value": norm_candidate if norm_candidate not in (None, "") else None,
+            "success": False if norm_candidate in (None, "") else True,
+            "notes": [],
+            "confidence": None,
+            "score": None,
+            "raw_candidates": []
+        }
 
-    logger.info(f"[validator] Recommendation: {recommendation} (risk={result['risk_score']})")
-    return result
+
+def _is_low_confidence_field(norm: Dict[str, Any]) -> bool:
+    """Detect fields that were attempted but low confidence."""
+    # attempted but explicitly failed
+    if norm.get("success") is False and norm.get("original") not in (None, "", []):
+        return True
+    # numeric score present
+    sc = norm.get("score")
+    if isinstance(sc, (int, float)) and sc < LOW_CONF_SCORE:
+        return True
+    # textual confidence label
+    conf = (norm.get("confidence") or "").lower() if norm.get("confidence") else None
+    if conf in ("low", "very low", "weak"):
+        return True
+    return False
+
+
+def _parse_float_safe(s: Optional[Any]) -> Optional[float]:
+    """Try to parse float from str/int/float; return None on failure."""
+    if s is None:
+        return None
+    try:
+        if isinstance(s, (int, float)):
+            return float(s)
+        st = str(s).strip()
+        st_clean = re.sub(r"[^\d\.\-]", "", st)
+        if st_clean in ("", "-", "."):
+            return None
+        return float(st_clean)
+    except Exception:
+        return None
+
+
+def _suspicious_email_domain(email_value: str) -> bool:
+    """Simple heuristics for suspicious domains (typo-like endings)."""
+    try:
+        domain = email_value.split("@", 1)[1].lower()
+    except Exception:
+        return False
+    suspicious_endings = (".con", ".cm", ".coo", ".gmal", ".hotnail")
+    return any(domain.endswith(s) for s in suspicious_endings)
+
+
+def _suspicious_phone_digits(digits: str) -> bool:
+    """Detect placeholder or bogus phone patterns."""
+    if not digits:
+        return False
+    # all same digit or sequential patterns
+    if len(set(digits)) == 1:
+        return True
+    if digits.endswith("0000") or digits.startswith("000"):
+        return True
+    return False
+
+
+def validate_claim_fields(raw_fields: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Main validator entry.
+
+    raw_fields: mapping field_name -> primitive (as produced by extractor).
+    Returns structured validation dict (see module docstring).
+    """
+    try:
+        # -------------------------
+        # 1) Normalize all fields (use existing normalizers)
+        # -------------------------
+        fields: Dict[str, Dict[str, Any]] = {}
+
+        fields["claim_id"] = _as_norm_dict(normalize_string(raw_fields.get("claim_id")))
+        fields["policy_no"] = _as_norm_dict(normalize_string(raw_fields.get("policy_no")))
+        fields["claimant_name"] = _as_norm_dict(normalize_string(raw_fields.get("claimant_name")))
+        fields["phone"] = _as_norm_dict(normalize_phone(raw_fields.get("phone")))
+        fields["email"] = _as_norm_dict(normalize_email(raw_fields.get("email")))
+        fields["vehicle"] = _as_norm_dict(normalize_string(raw_fields.get("vehicle")))
+        fields["damage"] = _as_norm_dict(normalize_string(raw_fields.get("damage")))
+        fields["date"] = _as_norm_dict(normalize_date(raw_fields.get("date")))
+        fields["amount_estimated"] = _as_norm_dict(normalize_amount(raw_fields.get("amount_estimated")))
+
+        # insured_amount may be missing
+        if raw_fields.get("insured_amount") not in (None, ""):
+            fields["insured_amount"] = _as_norm_dict(normalize_amount(raw_fields.get("insured_amount")))
+        else:
+            fields["insured_amount"] = {
+                "original": None,
+                "value": None,
+                "success": False,
+                "notes": ["not_provided"],
+                "confidence": None,
+                "score": None,
+                "raw_candidates": []
+            }
+
+        # -------------------------
+        # 2) Basic presence, missing & duplicate checks
+        # -------------------------
+        issues: List[str] = []
+        warnings: List[str] = []
+        missing_required: List[str] = []
+        decision_reasons: List[str] = []
+
+        for req in REQUIRED:
+            nf = fields.get(req)
+            if not nf or not nf.get("success") or nf.get("value") in (None, ""):
+                missing_required.append(req)
+                issues.append(f"{req}_missing")
+
+        # duplicate detection if normalizer provided multiple candidates
+        for fname in ("policy_no", "claim_id", "phone", "email"):
+            nf = fields.get(fname, {})
+            candidates = nf.get("raw_candidates") or []
+            if isinstance(candidates, list) and len(candidates) > 1:
+                warnings.append(f"{fname}_multiple_candidates")
+                # add note to explainability
+                # but keep processing
+
+        # -------------------------
+        # 3) Amount logic: parse numeric canonical amounts
+        # -------------------------
+        amt_val = _parse_float_safe(fields["amount_estimated"].get("value"))
+        insured_val = _parse_float_safe(fields["insured_amount"].get("value"))
+
+        # ignore obviously placeholder/office-use amounts (validator doesn't rely on raw_text here)
+        if amt_val is None:
+            # try fallback to 'original' (sometimes normalizer cleaned but left canonical blank)
+            amt_val = _parse_float_safe(fields["amount_estimated"].get("original"))
+        if insured_val is None:
+            insured_val = _parse_float_safe(fields["insured_amount"].get("original"))
+
+        if amt_val is None:
+            issues.append("amount_missing_or_invalid")
+        if insured_val is None:
+            warnings.append("insured_amount_missing_or_invalid")
+
+        # cross-field rule
+        if amt_val is not None and insured_val is not None:
+            if amt_val > insured_val:
+                issues.append("amount_exceeds_insured")
+                decision_reasons.append("Claimed amount greater than insured amount.")
+            if amt_val <= 0:
+                issues.append("non_positive_amount")
+                decision_reasons.append("Claim amount is zero or negative.")
+
+        # -------------------------
+        # 4) Date plausibility
+        # -------------------------
+        date_ok = fields["date"].get("success") and fields["date"].get("value")
+        date_str = fields["date"].get("value")
+        if not date_ok:
+            warnings.append("date_invalid_format")
+        else:
+            try:
+                parsed = datetime.fromisoformat(date_str)
+                # future check
+                if parsed > (datetime.utcnow() + timedelta(days=1)):
+                    warnings.append("date_in_future")
+                # very old check (>5 years)
+                if parsed < (datetime.utcnow() - timedelta(days=365 * 5)):
+                    warnings.append("date_too_old")
+            except Exception:
+                warnings.append("date_validation_parse_failed")
+
+        # -------------------------
+        # 5) Phone / Email heuristics
+        # -------------------------
+        phone_val = fields["phone"].get("value") or ""
+        phone_digits = re.sub(r"[^\d]", "", str(phone_val) or "")
+        if fields["phone"].get("original") and not fields["phone"].get("success"):
+            warnings.append("phone_normalization_failed")
+        if phone_digits and _suspicious_phone_digits(phone_digits):
+            warnings.append("phone_suspicious")
+
+        email_val = (fields["email"].get("value") or "").lower()
+        if fields["email"].get("original") and not fields["email"].get("success"):
+            warnings.append("email_normalization_failed")
+        if email_val and _suspicious_email_domain(email_val):
+            warnings.append("email_domain_suspicious")
+
+        # -------------------------
+        # 6) Low-confidence fields detection (for AI/HITL)
+        # -------------------------
+        low_confidence_fields: List[str] = []
+        for name, nf in fields.items():
+            if _is_low_confidence_field(nf):
+                low_confidence_fields.append(name)
+
+        # -------------------------
+        # 7) Risk scoring (explainable heuristic)
+        # -------------------------
+        risk = 0.10
+        # penalties for missing required
+        risk += 0.20 * len(missing_required)
+        # penalties for concrete issues (higher weight)
+        risk += 0.18 * len([i for i in issues if "amount" in i or "non_positive" in i])
+        # penalties for warnings
+        risk += 0.05 * len(warnings)
+        # penalty for low confidence fields
+        risk += 0.05 * len(low_confidence_fields)
+        # extra heavy penalty if claimed > insured
+        if "amount_exceeds_insured" in issues:
+            risk += 0.35
+
+        risk_score = max(0.0, min(1.0, risk))
+
+        # -------------------------
+        # 8) Recommendation logic
+        # -------------------------
+        if "amount_exceeds_insured" in issues:
+            recommendation = "reject"
+        elif missing_required:
+            recommendation = "review"
+        elif risk_score >= 0.7:
+            recommendation = "review"
+        else:
+            recommendation = "approve"
+
+        if not decision_reasons:
+            if recommendation == "approve":
+                decision_reasons.append("All required fields valid.")
+            elif recommendation == "review":
+                decision_reasons.append("Some fields need manual review.")
+            elif recommendation == "reject":
+                decision_reasons.append("Critical violation detected.")
+
+        # -------------------------
+        # 9) Explainability & final shape
+        # -------------------------
+        explainability = {
+            "low_confidence_threshold": LOW_CONF_SCORE,
+            "low_confidence_fields": sorted(low_confidence_fields),
+            "field_success_map": {k: bool(v.get("success")) for k, v in fields.items()},
+            "field_notes": {k: (v.get("notes") or []) for k, v in fields.items()},
+        }
+
+        result = {
+            "fields": fields,
+            "issues": sorted(list(set(issues))),
+            "warnings": sorted(list(set(warnings))),
+            "missing_required": sorted(list(set(missing_required))),
+            "risk_score": round(risk_score, 3),
+            "recommendation": recommendation,
+            "decision_reasons": decision_reasons,
+            # extras that are safe for pipeline components to read if present:
+            "is_complete": len(missing_required) == 0,
+            "explainability": explainability,
+        }
+
+        return result
+
+    except Exception:
+        # Defensive fallback to keep pipeline stable
+        return {
+            "fields": {},
+            "issues": ["validator_error"],
+            "warnings": [],
+            "missing_required": REQUIRED.copy(),
+            "risk_score": 1.0,
+            "recommendation": "review",
+            "decision_reasons": ["validator_exception_fallback"],
+            "is_complete": False,
+            "explainability": {}
+        }
+
