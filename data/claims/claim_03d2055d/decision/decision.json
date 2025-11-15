@@ -1,0 +1,21 @@
+{
+  "timestamp": "2025-11-15T04:54:46.275850",
+  "decision": {
+    "decision": "approve",
+    "confidence": 0.9,
+    "requires_human": false,
+    "reasons": [
+      "amount_within_insured_limit",
+      "validator_suggests_review"
+    ],
+    "evidence": {
+      "amount": 100.0,
+      "insured_amount": 6429.0,
+      "low_confidence_fields": []
+    },
+    "flags": [
+      "within_limit",
+      "validator_review"
+    ]
+  }
+}

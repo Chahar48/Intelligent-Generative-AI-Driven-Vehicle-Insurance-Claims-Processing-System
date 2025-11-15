@@ -1,0 +1,54 @@
+MOTOR VEHICLE INSURANCE CLAIM FORM
+
+Claim Reference: CL/MV/2024/78542
+Policy Number: MNP/MV/2023/451269
+Date of Incident: 2024-01-15
+Time of Incident: 14:30
+
+CLAIMANT INFORMATION:
+Full Name: Mukesh Sharma
+Contact Number: +91-9876543210
+Email Address: mukesh.sharma@email.com
+Address: 45, Green Park Apartments, Sector 15, New Delhi - 110025
+
+VEHICLE DETAILS:
+Registration Number: DL-01-AB-1234
+Make: Hyundai
+Model: Creta SX
+Year: 2022
+Vehicle Type: SUV
+Engine Number: G4LJ58X249876
+Chassis Number: MALC58123KL789456
+
+INSURANCE DETAILS:
+Insurance Company: United India Insurance Co.
+Policy Type: Comprehensive
+Policy Period: 15-03-2023 to 14-03-2024
+Insured Amount: ₹850,000
+
+INCIDENT DETAILS:
+Date of Loss: 2024-01-15
+Place of Accident: Ring Road near Dhaula Kuan, New Delhi
+Nature of Damage: Front bumper damage, right headlight broken, minor bonnet dent
+Estimated Repair Cost: ₹45,000
+
+ACCIDENT DESCRIPTION:
+While driving from Connaught Place to Airport, another vehicle (DL-02-CD-5678) suddenly changed lanes without signal and collided with the front right side of my vehicle. Police were informed and FIR No. 156/2024 was registered at Delhi Traffic Police Station.
+
+DOCUMENTS ATTACHED:
+✓ Copy of Driving License
+✓ Vehicle RC Copy
+✓ Insurance Policy Copy
+✓ FIR Copy
+✓ Damage Photographs (4 nos.)
+✓ Repair Estimate from Authorized Workshop
+
+Claimant Signature: Mukesh Sharma
+Date: 2024-01-16
+
+FOR OFFICE USE ONLY:
+Claim Received Date: 2024-01-16
+Claim Officer: Rajesh Kumar
+Status: Under Processing
+Approved Amount: 
+Remarks: 

@@ -1,0 +1,47 @@
+{
+  "claim_id": "claim_ac0c7321",
+  "events": [
+    {
+      "timestamp": "2025-11-15 10:26:55",
+      "event": "review_task_created",
+      "details": {
+        "reasons": [
+          "validation_issues",
+          "missing_required_fields",
+          "decision_requires_human_review",
+          "low_decision_confidence"
+        ]
+      },
+      "event_hash": "bcbe7969b2eda007b9304908a495fe7003ef2315830d25344be768a7447276c7"
+    },
+    {
+      "timestamp": "2025-11-15 10:28:48",
+      "event": "human_review_submitted",
+      "details": {
+        "corrected_fields": {
+          "claim_id": "cla",
+          "policy_no": "pOLUxc",
+          "claimant_name": "Mukesh",
+          "phone": "7526266325",
+          "email": "chaharmukesh519@gmail.com",
+          "vehicle": "Hero Honda",
+          "damage": "accident",
+          "amount_estimated": "5000",
+          "date": "14-11-25"
+        },
+        "corrected_text": false,
+        "overridden_decision": null,
+        "comments": "Corrections submitted via UI"
+      },
+      "event_hash": "cfa5bd1301ff6d53a0a8ea0dc6bd420925a9f0f73e451c6a2021cd992b16427d"
+    },
+    {
+      "timestamp": "2025-11-15 10:28:48",
+      "event": "final_output_generated",
+      "details": {
+        "final_decision": "review"
+      },
+      "event_hash": "87340193c3432d71438c0ef0bdcadc746292427ab558c20ca98e595edc697587"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "timestamp": "2025-11-15T04:56:55.402134",
+  "decision": {
+    "decision": "review",
+    "confidence": 0.4,
+    "requires_human": true,
+    "reasons": [
+      "decision_failed"
+    ],
+    "evidence": {
+      "amount": null,
+      "insured_amount": null,
+      "low_confidence_fields": []
+    },
+    "flags": [
+      "engine_error"
+    ]
+  }
+}

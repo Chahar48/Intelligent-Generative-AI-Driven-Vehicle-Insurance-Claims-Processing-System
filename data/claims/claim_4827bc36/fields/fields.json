@@ -1,0 +1,898 @@
+{
+  "timestamp": "2025-11-15T04:53:29.280396",
+  "raw_fields": {
+    "fields": {
+      "claim_id": {
+        "value": "CL/MV/2024/78542",
+        "canonical": "CL/MV/2024/78542",
+        "score": 0.95,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "policy_no": {
+        "value": "MNP/MV/2023/451269",
+        "canonical": "MNP/MV/2023/451269",
+        "score": 0.95,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "claimant_name": {
+        "value": "Mukesh Sharma",
+        "canonical": "Mukesh Sharma",
+        "score": 0.95,
+        "confidence": "high",
+        "method": "regex-line"
+      },
+      "phone": {
+        "value": "+919876543210",
+        "canonical": "+919876543210",
+        "score": 0.85,
+        "confidence": "high",
+        "method": "alt-phone"
+      },
+      "email": {
+        "value": "mukesh.sharma@email.com",
+        "canonical": "mukesh.sharma@email.com",
+        "score": 0.95,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "vehicle": {
+        "value": "INSURANCE CLAIM FORM",
+        "canonical": "INSURANCE CLAIM FORM",
+        "score": 0.85,
+        "confidence": "high",
+        "method": "multiline"
+      },
+      "registration_no": {
+        "value": "DL-01-AB-1234",
+        "canonical": "DL-01-AB-1234",
+        "score": 0.9,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "make": {
+        "value": "Hyundai",
+        "canonical": "Hyundai",
+        "score": 0.9,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "model": {
+        "value": "Creta SX",
+        "canonical": "Creta SX",
+        "score": 0.9,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "year": {
+        "value": "2022",
+        "canonical": "2022",
+        "score": 0.9,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "damage": {
+        "value": "2024-01-15 Place of Accident: Ring Road near Dhaula Kuan, New Delhi Nature of Damage: Front bumper damage, right headlight broken, minor bonnet dent Estimated Repair Cost: ₹45,000",
+        "canonical": "2024-01-15 Place of Accident: Ring Road near Dhaula Kuan, New Delhi Nature of Damage: Front bumper damage, right headlight broken, minor bonnet dent Estimated Repair Cost: ₹45,000",
+        "score": 0.85,
+        "confidence": "high",
+        "method": "multiline"
+      },
+      "amount_estimated": {
+        "value": "₹ 45000.00",
+        "canonical": "45000.00",
+        "score": 0.95,
+        "confidence": "high",
+        "method": "labelled"
+      },
+      "insured_amount": {
+        "value": "850000.00",
+        "canonical": "850000.00",
+        "score": 0.92,
+        "confidence": "high",
+        "method": "labelled"
+      },
+      "date": {
+        "value": "2024-01-15",
+        "canonical": "2024-01-15",
+        "score": 0.9,
+        "confidence": "high",
+        "method": "regex"
+      }
+    },
+    "raw_lines": [
+      {
+        "index": 0,
+        "text": "MOTOR VEHICLE INSURANCE CLAIM FORM"
+      },
+      {
+        "index": 1,
+        "text": ""
+      },
+      {
+        "index": 2,
+        "text": "Claim Reference: CL/MV/2024/78542"
+      },
+      {
+        "index": 3,
+        "text": "Policy Number: MNP/MV/2023/451269"
+      },
+      {
+        "index": 4,
+        "text": "Date of Incident: 2024-01-15"
+      },
+      {
+        "index": 5,
+        "text": "Time of Incident: 14:30"
+      },
+      {
+        "index": 6,
+        "text": ""
+      },
+      {
+        "index": 7,
+        "text": "CLAIMANT INFORMATION:"
+      },
+      {
+        "index": 8,
+        "text": "Full Name: Mukesh Sharma"
+      },
+      {
+        "index": 9,
+        "text": "Contact Number: +91-9876543210"
+      },
+      {
+        "index": 10,
+        "text": "Email Address: mukesh.sharma@email.com"
+      },
+      {
+        "index": 11,
+        "text": "Address: 45, Green Park Apartments, Sector 15, New Delhi - 110025"
+      },
+      {
+        "index": 12,
+        "text": ""
+      },
+      {
+        "index": 13,
+        "text": "VEHICLE DETAILS:"
+      },
+      {
+        "index": 14,
+        "text": "Registration Number: DL-01-AB-1234"
+      },
+      {
+        "index": 15,
+        "text": "Make: Hyundai"
+      },
+      {
+        "index": 16,
+        "text": "Model: Creta SX"
+      },
+      {
+        "index": 17,
+        "text": "Year: 2022"
+      },
+      {
+        "index": 18,
+        "text": "Vehicle Type: SUV"
+      },
+      {
+        "index": 19,
+        "text": "Engine Number: G4LJ58X249876"
+      },
+      {
+        "index": 20,
+        "text": "Chassis Number: MALC58123KL789456"
+      },
+      {
+        "index": 21,
+        "text": ""
+      },
+      {
+        "index": 22,
+        "text": "INSURANCE DETAILS:"
+      },
+      {
+        "index": 23,
+        "text": "Insurance Company: United India Insurance Co."
+      },
+      {
+        "index": 24,
+        "text": "Policy Type: Comprehensive"
+      },
+      {
+        "index": 25,
+        "text": "Policy Period: 15-03-2023 to 14-03-2024"
+      },
+      {
+        "index": 26,
+        "text": "Insured Amount: ₹850,000"
+      },
+      {
+        "index": 27,
+        "text": ""
+      },
+      {
+        "index": 28,
+        "text": "INCIDENT DETAILS:"
+      },
+      {
+        "index": 29,
+        "text": "Date of Loss: 2024-01-15"
+      },
+      {
+        "index": 30,
+        "text": "Place of Accident: Ring Road near Dhaula Kuan, New Delhi"
+      },
+      {
+        "index": 31,
+        "text": "Nature of Damage: Front bumper damage, right headlight broken, minor bonnet dent"
+      },
+      {
+        "index": 32,
+        "text": "Estimated Repair Cost: ₹45,000"
+      },
+      {
+        "index": 33,
+        "text": ""
+      },
+      {
+        "index": 34,
+        "text": "ACCIDENT DESCRIPTION:"
+      },
+      {
+        "index": 35,
+        "text": "While driving from Connaught Place to Airport, another vehicle (DL-02-CD-5678) suddenly changed lanes without signal and collided with the front right side of my vehicle. Police were informed and FIR No. 156/2024 was registered at Delhi Traffic Police Station."
+      },
+      {
+        "index": 36,
+        "text": ""
+      },
+      {
+        "index": 37,
+        "text": "DOCUMENTS ATTACHED:"
+      },
+      {
+        "index": 38,
+        "text": "✓ Copy of Driving License"
+      },
+      {
+        "index": 39,
+        "text": "✓ Vehicle RC Copy"
+      },
+      {
+        "index": 40,
+        "text": "✓ Insurance Policy Copy"
+      },
+      {
+        "index": 41,
+        "text": "✓ FIR Copy"
+      },
+      {
+        "index": 42,
+        "text": "✓ Damage Photographs (4 nos.)"
+      },
+      {
+        "index": 43,
+        "text": "✓ Repair Estimate from Authorized Workshop"
+      },
+      {
+        "index": 44,
+        "text": ""
+      },
+      {
+        "index": 45,
+        "text": "Claimant Signature: Mukesh Sharma"
+      },
+      {
+        "index": 46,
+        "text": "Date: 2024-01-16"
+      },
+      {
+        "index": 47,
+        "text": ""
+      },
+      {
+        "index": 48,
+        "text": "FOR OFFICE USE ONLY:"
+      },
+      {
+        "index": 49,
+        "text": "Claim Received Date: 2024-01-16"
+      },
+      {
+        "index": 50,
+        "text": "Claim Officer: Rajesh Kumar"
+      },
+      {
+        "index": 51,
+        "text": "Status: Under Processing"
+      },
+      {
+        "index": 52,
+        "text": "Approved Amount: "
+      },
+      {
+        "index": 53,
+        "text": "Remarks: "
+      }
+    ],
+    "notes": []
+  },
+  "normalized_fields": {
+    "claim_id": {
+      "original": "CL/MV/2024/78542",
+      "value": "CL/MV/2024/78542",
+      "success": true,
+      "notes": "cleaned"
+    },
+    "policy_no": {
+      "original": "MNP/MV/2023/451269",
+      "value": "MNP/MV/2023/451269",
+      "success": true,
+      "notes": "cleaned"
+    },
+    "claimant_name": {
+      "original": "Mukesh Sharma",
+      "value": "Mukesh Sharma",
+      "success": true,
+      "notes": "cleaned"
+    },
+    "phone": {
+      "original": "+919876543210",
+      "value": "+919876543210",
+      "success": true,
+      "notes": "generic_format"
+    },
+    "email": {
+      "original": "mukesh.sharma@email.com",
+      "value": "mukesh.sharma@email.com",
+      "success": true,
+      "notes": "valid"
+    },
+    "vehicle": {
+      "original": "INSURANCE CLAIM FORM",
+      "value": "INSURANCE CLAIM FORM",
+      "success": true,
+      "notes": "cleaned"
+    },
+    "damage": {
+      "original": "2024-01-15 Place of Accident: Ring Road near Dhaula Kuan, New Delhi Nature of Damage: Front bumper damage, right headlight broken, minor bonnet dent Estimated Repair Cost: ₹45,000",
+      "value": "2024-01-15 Place of Accident: Ring Road near Dhaula Kuan, New Delhi Nature of Damage: Front bumper damage, right headlight broken, minor bonnet dent Estimated Repair Cost: ₹45,000",
+      "success": true,
+      "notes": "cleaned"
+    },
+    "date": {
+      "original": "2024-01-15",
+      "value": "2024-01-15",
+      "success": true,
+      "notes": "iso_format"
+    },
+    "amount_estimated": {
+      "original": "₹ 45000.00",
+      "value": "45000.00",
+      "success": true,
+      "notes": "normalized"
+    },
+    "insured_amount": {
+      "original": "850000.00",
+      "value": "850000.00",
+      "success": true,
+      "notes": "normalized"
+    }
+  },
+  "validation": {
+    "fields": {
+      "claim_id": {
+        "original": "CL/MV/2024/78542",
+        "value": "CL/MV/2024/78542",
+        "success": true,
+        "notes": "cleaned",
+        "confidence": null,
+        "score": null,
+        "raw_candidates": []
+      },
+      "policy_no": {
+        "original": "MNP/MV/2023/451269",
+        "value": "MNP/MV/2023/451269",
+        "success": true,
+        "notes": "cleaned",
+        "confidence": null,
+        "score": null,
+        "raw_candidates": []
+      },
+      "claimant_name": {
+        "original": "Mukesh Sharma",
+        "value": "Mukesh Sharma",
+        "success": true,
+        "notes": "cleaned",
+        "confidence": null,
+        "score": null,
+        "raw_candidates": []
+      },
+      "phone": {
+        "original": "+919876543210",
+        "value": "+919876543210",
+        "success": true,
+        "notes": "generic_format",
+        "confidence": null,
+        "score": null,
+        "raw_candidates": []
+      },
+      "email": {
+        "original": "mukesh.sharma@email.com",
+        "value": "mukesh.sharma@email.com",
+        "success": true,
+        "notes": "valid",
+        "confidence": null,
+        "score": null,
+        "raw_candidates": []
+      },
+      "vehicle": {
+        "original": "INSURANCE CLAIM FORM",
+        "value": "INSURANCE CLAIM FORM",
+        "success": true,
+        "notes": "cleaned",
+        "confidence": null,
+        "score": null,
+        "raw_candidates": []
+      },
+      "damage": {
+        "original": "2024-01-15 Place of Accident: Ring Road near Dhaula Kuan, New Delhi Nature of Damage: Front bumper damage, right headlight broken, minor bonnet dent Estimated Repair Cost: ₹45,000",
+        "value": "2024-01-15 Place of Accident: Ring Road near Dhaula Kuan, New Delhi Nature of Damage: Front bumper damage, right headlight broken, minor bonnet dent Estimated Repair Cost: ₹45,000",
+        "success": true,
+        "notes": "cleaned",
+        "confidence": null,
+        "score": null,
+        "raw_candidates": []
+      },
+      "date": {
+        "original": "2024-01-15",
+        "value": "2024-01-15",
+        "success": true,
+        "notes": "iso_format",
+        "confidence": null,
+        "score": null,
+        "raw_candidates": []
+      },
+      "amount_estimated": {
+        "original": "₹ 45000.00",
+        "value": "45000.00",
+        "success": true,
+        "notes": "normalized",
+        "confidence": null,
+        "score": null,
+        "raw_candidates": []
+      },
+      "insured_amount": {
+        "original": "850000.00",
+        "value": "850000.00",
+        "success": true,
+        "notes": "normalized",
+        "confidence": null,
+        "score": null,
+        "raw_candidates": []
+      }
+    },
+    "issues": [],
+    "warnings": [],
+    "missing_required": [],
+    "risk_score": 0.1,
+    "recommendation": "approve",
+    "decision_reasons": [
+      "All required fields valid."
+    ],
+    "is_complete": true,
+    "explainability": {
+      "low_confidence_threshold": 0.6,
+      "low_confidence_fields": [],
+      "field_success_map": {
+        "claim_id": true,
+        "policy_no": true,
+        "claimant_name": true,
+        "phone": true,
+        "email": true,
+        "vehicle": true,
+        "damage": true,
+        "date": true,
+        "amount_estimated": true,
+        "insured_amount": true
+      },
+      "field_notes": {
+        "claim_id": "cleaned",
+        "policy_no": "cleaned",
+        "claimant_name": "cleaned",
+        "phone": "generic_format",
+        "email": "valid",
+        "vehicle": "cleaned",
+        "damage": "cleaned",
+        "date": "iso_format",
+        "amount_estimated": "normalized",
+        "insured_amount": "normalized"
+      }
+    }
+  },
+  "ai_inferred_fields": {
+    "fields": {
+      "claim_id": {
+        "value": "CL/MV/2024/78542",
+        "canonical": "CL/MV/2024/78542",
+        "score": 0.95,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "policy_no": {
+        "value": "MNP/MV/2023/451269",
+        "canonical": "MNP/MV/2023/451269",
+        "score": 0.95,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "claimant_name": {
+        "value": "Mukesh Sharma",
+        "canonical": "Mukesh Sharma",
+        "score": 0.95,
+        "confidence": "high",
+        "method": "regex-line"
+      },
+      "phone": {
+        "value": "+919876543210",
+        "canonical": "+919876543210",
+        "score": 0.85,
+        "confidence": "high",
+        "method": "alt-phone"
+      },
+      "email": {
+        "value": "mukesh.sharma@email.com",
+        "canonical": "mukesh.sharma@email.com",
+        "score": 0.95,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "vehicle": {
+        "value": "INSURANCE CLAIM FORM",
+        "canonical": "INSURANCE CLAIM FORM",
+        "score": 0.85,
+        "confidence": "high",
+        "method": "multiline"
+      },
+      "registration_no": {
+        "value": "DL-01-AB-1234",
+        "canonical": "DL-01-AB-1234",
+        "score": 0.9,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "make": {
+        "value": "Hyundai",
+        "canonical": "Hyundai",
+        "score": 0.9,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "model": {
+        "value": "Creta SX",
+        "canonical": "Creta SX",
+        "score": 0.9,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "year": {
+        "value": "2022",
+        "canonical": "2022",
+        "score": 0.9,
+        "confidence": "high",
+        "method": "regex"
+      },
+      "damage": {
+        "value": "2024-01-15 Place of Accident: Ring Road near Dhaula Kuan, New Delhi Nature of Damage: Front bumper damage, right headlight broken, minor bonnet dent Estimated Repair Cost: ₹45,000",
+        "canonical": "2024-01-15 Place of Accident: Ring Road near Dhaula Kuan, New Delhi Nature of Damage: Front bumper damage, right headlight broken, minor bonnet dent Estimated Repair Cost: ₹45,000",
+        "score": 0.85,
+        "confidence": "high",
+        "method": "multiline"
+      },
+      "amount_estimated": {
+        "value": "₹ 45000.00",
+        "canonical": "45000.00",
+        "score": 0.95,
+        "confidence": "high",
+        "method": "labelled"
+      },
+      "insured_amount": {
+        "value": "850000.00",
+        "canonical": "850000.00",
+        "score": 0.92,
+        "confidence": "high",
+        "method": "labelled"
+      },
+      "date": {
+        "value": "2024-01-15",
+        "canonical": "2024-01-15",
+        "score": 0.9,
+        "confidence": "high",
+        "method": "regex"
+      }
+    },
+    "raw_lines": [
+      {
+        "index": 0,
+        "text": "MOTOR VEHICLE INSURANCE CLAIM FORM"
+      },
+      {
+        "index": 1,
+        "text": ""
+      },
+      {
+        "index": 2,
+        "text": "Claim Reference: CL/MV/2024/78542"
+      },
+      {
+        "index": 3,
+        "text": "Policy Number: MNP/MV/2023/451269"
+      },
+      {
+        "index": 4,
+        "text": "Date of Incident: 2024-01-15"
+      },
+      {
+        "index": 5,
+        "text": "Time of Incident: 14:30"
+      },
+      {
+        "index": 6,
+        "text": ""
+      },
+      {
+        "index": 7,
+        "text": "CLAIMANT INFORMATION:"
+      },
+      {
+        "index": 8,
+        "text": "Full Name: Mukesh Sharma"
+      },
+      {
+        "index": 9,
+        "text": "Contact Number: +91-9876543210"
+      },
+      {
+        "index": 10,
+        "text": "Email Address: mukesh.sharma@email.com"
+      },
+      {
+        "index": 11,
+        "text": "Address: 45, Green Park Apartments, Sector 15, New Delhi - 110025"
+      },
+      {
+        "index": 12,
+        "text": ""
+      },
+      {
+        "index": 13,
+        "text": "VEHICLE DETAILS:"
+      },
+      {
+        "index": 14,
+        "text": "Registration Number: DL-01-AB-1234"
+      },
+      {
+        "index": 15,
+        "text": "Make: Hyundai"
+      },
+      {
+        "index": 16,
+        "text": "Model: Creta SX"
+      },
+      {
+        "index": 17,
+        "text": "Year: 2022"
+      },
+      {
+        "index": 18,
+        "text": "Vehicle Type: SUV"
+      },
+      {
+        "index": 19,
+        "text": "Engine Number: G4LJ58X249876"
+      },
+      {
+        "index": 20,
+        "text": "Chassis Number: MALC58123KL789456"
+      },
+      {
+        "index": 21,
+        "text": ""
+      },
+      {
+        "index": 22,
+        "text": "INSURANCE DETAILS:"
+      },
+      {
+        "index": 23,
+        "text": "Insurance Company: United India Insurance Co."
+      },
+      {
+        "index": 24,
+        "text": "Policy Type: Comprehensive"
+      },
+      {
+        "index": 25,
+        "text": "Policy Period: 15-03-2023 to 14-03-2024"
+      },
+      {
+        "index": 26,
+        "text": "Insured Amount: ₹850,000"
+      },
+      {
+        "index": 27,
+        "text": ""
+      },
+      {
+        "index": 28,
+        "text": "INCIDENT DETAILS:"
+      },
+      {
+        "index": 29,
+        "text": "Date of Loss: 2024-01-15"
+      },
+      {
+        "index": 30,
+        "text": "Place of Accident: Ring Road near Dhaula Kuan, New Delhi"
+      },
+      {
+        "index": 31,
+        "text": "Nature of Damage: Front bumper damage, right headlight broken, minor bonnet dent"
+      },
+      {
+        "index": 32,
+        "text": "Estimated Repair Cost: ₹45,000"
+      },
+      {
+        "index": 33,
+        "text": ""
+      },
+      {
+        "index": 34,
+        "text": "ACCIDENT DESCRIPTION:"
+      },
+      {
+        "index": 35,
+        "text": "While driving from Connaught Place to Airport, another vehicle (DL-02-CD-5678) suddenly changed lanes without signal and collided with the front right side of my vehicle. Police were informed and FIR No. 156/2024 was registered at Delhi Traffic Police Station."
+      },
+      {
+        "index": 36,
+        "text": ""
+      },
+      {
+        "index": 37,
+        "text": "DOCUMENTS ATTACHED:"
+      },
+      {
+        "index": 38,
+        "text": "✓ Copy of Driving License"
+      },
+      {
+        "index": 39,
+        "text": "✓ Vehicle RC Copy"
+      },
+      {
+        "index": 40,
+        "text": "✓ Insurance Policy Copy"
+      },
+      {
+        "index": 41,
+        "text": "✓ FIR Copy"
+      },
+      {
+        "index": 42,
+        "text": "✓ Damage Photographs (4 nos.)"
+      },
+      {
+        "index": 43,
+        "text": "✓ Repair Estimate from Authorized Workshop"
+      },
+      {
+        "index": 44,
+        "text": ""
+      },
+      {
+        "index": 45,
+        "text": "Claimant Signature: Mukesh Sharma"
+      },
+      {
+        "index": 46,
+        "text": "Date: 2024-01-16"
+      },
+      {
+        "index": 47,
+        "text": ""
+      },
+      {
+        "index": 48,
+        "text": "FOR OFFICE USE ONLY:"
+      },
+      {
+        "index": 49,
+        "text": "Claim Received Date: 2024-01-16"
+      },
+      {
+        "index": 50,
+        "text": "Claim Officer: Rajesh Kumar"
+      },
+      {
+        "index": 51,
+        "text": "Status: Under Processing"
+      },
+      {
+        "index": 52,
+        "text": "Approved Amount: "
+      },
+      {
+        "index": 53,
+        "text": "Remarks: "
+      }
+    ],
+    "notes": [],
+    "claim_id": {
+      "original": "CL/MV/2024/78542",
+      "value": "CL/MV/2024/78542",
+      "success": true,
+      "notes": "cleaned"
+    },
+    "policy_no": {
+      "original": "MNP/MV/2023/451269",
+      "value": "MNP/MV/2023/451269",
+      "success": true,
+      "notes": "cleaned"
+    },
+    "claimant_name": {
+      "original": "Mukesh Sharma",
+      "value": "Mukesh Sharma",
+      "success": true,
+      "notes": "cleaned"
+    },
+    "phone": {
+      "original": "+91-9876543210",
+      "value": "+919876543210",
+      "success": true,
+      "notes": "generic_format"
+    },
+    "email": {
+      "original": "mukesh.sharma@email.com",
+      "value": "mukesh.sharma@email.com",
+      "success": true,
+      "notes": "valid"
+    },
+    "vehicle": {
+      "original": "{'registration_number': 'DL-01-AB-1234', 'make': 'Hyundai', 'model': 'Creta SX', 'year': '2022', 'type': 'SUV', 'engine_number': 'G4LJ58X249876', 'chassis_number': 'MALC58123KL789456'}",
+      "value": "{'registration_number': 'DL-01-AB-1234', 'make': 'Hyundai', 'model': 'Creta SX', 'year': '2022', 'type': 'SUV', 'engine_number': 'G4LJ58X249876', 'chassis_number': 'MALC58123KL789456'}",
+      "success": true,
+      "notes": "cleaned"
+    },
+    "damage": {
+      "original": "Front bumper damage, right headlight broken, minor bonnet dent",
+      "value": "Front bumper damage, right headlight broken, minor bonnet dent",
+      "success": true,
+      "notes": "cleaned"
+    },
+    "amount_estimated": {
+      "original": "45000",
+      "value": "45000.00",
+      "success": true,
+      "notes": "normalized"
+    },
+    "date": {
+      "original": "2024-01-15",
+      "value": "2024-01-15",
+      "success": true,
+      "notes": "iso_format"
+    },
+    "insured_amount": {
+      "original": "850000",
+      "value": "850000.00",
+      "success": true,
+      "notes": "normalized"
+    }
+  }
+}
